@@ -18,9 +18,9 @@ type CurseForgeProject struct {
 }
 
 type Version struct {
-	Id          uint
-	CurseId     int
-	FileId      int
+	Id          uint `gorm:"primaryKey;autoIncrement"`
+	CurseId     int  `gorm:"index"`
+	FileId      int  `gorm:"index"`
 	ModId       string
 	Version     string
 	Type        string

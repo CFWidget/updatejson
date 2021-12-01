@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 )
 
 var client = &http.Client{}
@@ -25,17 +26,24 @@ var ErrInvalidProjectId = errors.New("invalid project id")
 func main() {
 	var err error
 
+	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
+	//but because it's hard to do proper version checks, we will just read the files
+
 	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", os.Getenv("DB_USER"), os.Getenv("DB_PASS"), os.Getenv("DB_HOST"), os.Getenv("DB_DATABASE"))
 	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	sqlDB, err := db.DB()
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	if err != nil {
 		panic(err)
 	}
 	db = db.Debug()
-
-	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
-	//but because it's hard to do proper version checks, we will just read the files
-	//readCFApi(32274)
+	err = db.AutoMigrate(&Version{})
+	if err != nil {
+		panic(err)
+	}
 
 	r := gin.Default()
 	r.GET("/:projectId/:modId", processRequest)

@@ -1,5 +1,8 @@
 FROM golang:alpine AS builder
 
+WORKDIR /updatejson
+COPY . .
+
 RUN go build -o /go/bin/updatejson github.com/lordralex/updatejson
 
 FROM alpine
