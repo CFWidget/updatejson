@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gin-contrib/cache"
+	"github.com/gin-contrib/cache/persistence"
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml"
 	"gorm.io/driver/mysql"
@@ -14,11 +16,13 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 var client = &http.Client{}
 var db *gorm.DB
+var mcStore *persistence.MemcachedBinaryStore
 
 var ErrUnsupportedGame = errors.New("unsupported game")
 var ErrInvalidProjectId = errors.New("invalid project id")
@@ -39,14 +43,33 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	db = db.Debug()
+	if os.Getenv("DB_MODE") != "release" {
+		db = db.Debug()
+		fmt.Printf("Set DB_MODE to 'release' to disable debug database logger \n")
+	}
+
 	err = db.AutoMigrate(&Version{})
 	if err != nil {
 		panic(err)
 	}
 
 	r := gin.Default()
-	r.GET("/:projectId/:modId", processRequest)
+
+	if os.Getenv("MEMCACHE_SERVERS") != "" {
+		servers := os.Getenv("MEMCACHE_SERVERS")
+		username := os.Getenv("MEMCACHE_USER")
+		password := os.Getenv("MEMCACHE_PASS")
+		mcStore = persistence.NewMemcachedBinaryStore(servers, username, password, time.Minute*5)
+	}
+
+	if mcStore != nil {
+		r.GET("/:projectId/:modId", cache.CachePage(mcStore, persistence.DEFAULT, processRequest))
+		r.GET("/:projectId/:modId/expire", expireCache)
+	} else {
+		r.GET("/:projectId/:modId", processRequest)
+	}
+
+	fmt.Printf("Starting web services\n")
 	err = r.Run()
 	if err != nil {
 		panic(err)
@@ -77,6 +100,13 @@ func processRequest(c *gin.Context) {
 	} else {
 		c.Status(http.StatusNotFound)
 	}
+}
+
+func expireCache(c *gin.Context) {
+	key := strings.TrimSuffix(c.Request.RequestURI, "/expire")
+	fmt.Printf("Expiring %s\n", key)
+	_ = mcStore.Delete(cache.CreateKey(key))
+	c.Status(http.StatusAccepted)
 }
 
 func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
@@ -141,7 +171,9 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 }
 
 func getProject(projectId int) (CurseForgeProject, error) {
-	response, err := client.Get(fmt.Sprintf("https://addons-ecs.forgesvc.net/api/v2/addon/%d", projectId))
+	url := fmt.Sprintf("https://addons-ecs.forgesvc.net/api/v2/addon/%d", projectId)
+	fmt.Printf("[GET] %s\n", url)
+	response, err := client.Get(url)
 	if err != nil {
 		return CurseForgeProject{}, err
 	}
@@ -157,7 +189,9 @@ func getProject(projectId int) (CurseForgeProject, error) {
 }
 
 func getFiles(projectId int) ([]CurseForgeFile, error) {
-	response, err := client.Get(fmt.Sprintf("https://addons-ecs.forgesvc.net/api/v2/addon/%d/files", projectId))
+	url := fmt.Sprintf("https://addons-ecs.forgesvc.net/api/v2/addon/%d/files", projectId)
+	fmt.Printf("[GET] %s\n", url)
+	response, err := client.Get(url)
 	if err != nil {
 		panic(err)
 	}
@@ -183,7 +217,7 @@ func getModVersion(curseId int, curseFile CurseForgeFile) (*Version, error) {
 	}
 
 	if err == gorm.ErrRecordNotFound || version.Id == 0 {
-		fmt.Printf("Downloading: %s\n", curseFile.DownloadUrl)
+		fmt.Printf("[GET]: %s\n", curseFile.DownloadUrl)
 		response, err := http.Get(curseFile.DownloadUrl)
 		if err != nil {
 			return version, nil

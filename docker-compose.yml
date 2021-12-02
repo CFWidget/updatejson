@@ -7,6 +7,7 @@ services:
     restart: always
     depends_on:
       - database
+      - memcache
     ports:
       - "8080:8080"
     environment:
@@ -14,6 +15,9 @@ services:
       DB_PASS: updatejson
       DB_HOST: database
       DB_DATABASE: widget
+      GIN_MODE: release
+      DB_MODE: release
+      MEMCACHE_SERVERS: "memcache"
   database:
     image: mariadb
     restart: always
@@ -22,3 +26,11 @@ services:
       MYSQL_PASSWORD: updatejson
       MYSQL_DATABASE: widget
       MYSQL_RANDOM_ROOT_PASSWORD: "true"
+    volumes:
+      - "dbdata:/var/lib/mysql"
+  memcache:
+    image: memcached
+    command: ["-m", "64m"]
+
+volumes:
+  dbdata:
