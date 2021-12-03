@@ -68,6 +68,9 @@ func main() {
 	} else {
 		r.GET("/:projectId/:modId", processRequest)
 	}
+	r.StaticFile("/", "home.html")
+	r.StaticFile("/app.css", "app.css")
+	r.StaticFile("/app.js", "app.js")
 
 	fmt.Printf("Starting web services\n")
 	err = r.Run()
