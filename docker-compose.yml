@@ -30,6 +30,7 @@ services:
       - "dbdata:/var/lib/mysql"
   memcache:
     image: memcached
+    restart: always
     command: ["-m", "64m"]
 
 volumes:
