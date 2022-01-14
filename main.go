@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -109,6 +110,7 @@ func expireCache(c *gin.Context) {
 	key := strings.TrimSuffix(c.Request.RequestURI, "/expire")
 	fmt.Printf("Expiring %s\n", key)
 	_ = mcStore.Delete(cache.CreateKey(key))
+
 	c.Status(http.StatusAccepted)
 }
 
@@ -155,15 +157,47 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 		}
 	}
 
+
+	//get each unique file we need to download
+	files := make([]CurseForgeFile, 0)
+
+	for _, v := range results {
+		exists := false
+		for _, j := range files {
+			if j.Id == v.Id {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			files = append(files, v)
+		}
+	}
+
+	versionMap := make(map[int]*Version)
+	var wg sync.WaitGroup
+	for _, v := range files {
+		wg.Add(1)
+		go func(file CurseForgeFile) {
+			defer wg.Done()
+			versionInfo, err := getModVersion(project.Id, file)
+			if err != nil {
+				fmt.Printf("Error getting mod version from file: %s", err.Error())
+			}
+			versionMap[file.Id] = versionInfo
+		}(v)
+	}
+	wg.Wait()
+
 	promos := &UpdateJson{
 		Promos:   map[string]string{},
 		HomePage: project.WebsiteUrl,
 	}
 
 	for k, v := range results {
-		version, err := getModVersion(project.Id, v)
-		if err != nil {
-			return nil, err
+		version, exists := versionMap[v.Id]
+		if !exists || version == nil {
+			continue
 		}
 		if version.ModId == modId && version.Version != "" {
 			promos.Promos[k] = version.Version
@@ -223,6 +257,7 @@ func getModVersion(curseId int, curseFile CurseForgeFile) (*Version, error) {
 		fmt.Printf("[GET]: %s\n", curseFile.DownloadUrl)
 		response, err := http.Get(curseFile.DownloadUrl)
 		if err != nil {
+			fmt.Printf("Error downloading file: %s", err.Error())
 			return version, nil
 		}
 		defer response.Body.Close()
@@ -230,6 +265,7 @@ func getModVersion(curseId int, curseFile CurseForgeFile) (*Version, error) {
 		buff := bytes.NewBuffer([]byte{})
 		size, err := io.Copy(buff, response.Body)
 		if err != nil {
+			fmt.Printf("Error downloading file: %s", err.Error())
 			return version, nil
 		}
 		response.Body.Close()
@@ -237,26 +273,16 @@ func getModVersion(curseId int, curseFile CurseForgeFile) (*Version, error) {
 		reader := bytes.NewReader(buff.Bytes())
 		r, err := zip.NewReader(reader, size)
 		if err != nil {
+			fmt.Printf("Error unzipping file: %s", err.Error())
 			return version, nil
 		}
 
 		var modInfo ModInfo
 
 		for _, file := range r.File {
-			if file.Name == "META-INF/mods.toml" {
-				fileReader, err := file.Open()
-				if err != nil {
-					return version, nil
-				}
-				data, err := io.ReadAll(fileReader)
-				if err != nil {
-					return version, nil
-				}
-				err = toml.Unmarshal(data, &modInfo)
-				if err != nil {
-					return version, nil
-				}
-				_ = fileReader.Close()
+			info, exists := checkZipFile(file)
+			if exists {
+				modInfo = info
 			}
 		}
 
@@ -269,16 +295,46 @@ func getModVersion(curseId int, curseFile CurseForgeFile) (*Version, error) {
 				version.Version = z.Version
 				version.ModId = z.ModId
 				err = db.Create(version).Error
-				return version, nil
+				if err != nil {
+					fmt.Printf("Error saving file: %s", err.Error())
+					return version, nil
+				}
 			}
 		} else {
 			//create with no real data, because it doesn't exist
 			err = db.Create(version).Error
 			if err != nil {
+				fmt.Printf("Error saving file: %s", err.Error())
 				return version, nil
 			}
 		}
 	}
 
 	return version, nil
+}
+
+func checkZipFile(file *zip.File) (ModInfo, bool) {
+	var modInfo ModInfo
+	if file.Name == "META-INF/mods.toml" {
+		fileReader, err := file.Open()
+		if err != nil {
+			fmt.Printf("Error reading mods.toml: %s", err.Error())
+			return modInfo, false
+		}
+		defer fileReader.Close()
+
+		data, err := io.ReadAll(fileReader)
+		if err != nil {
+			fmt.Printf("Error reading mods.toml: %s", err.Error())
+			return modInfo, false
+		}
+
+		err = toml.Unmarshal(data, &modInfo)
+		if err != nil {
+			fmt.Printf("Error reading mods.toml: %s", err.Error())
+			return modInfo, false
+		}
+		return modInfo, true
+	}
+	return modInfo, false
 }
