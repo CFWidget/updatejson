@@ -32,17 +32,26 @@ func main() {
 	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
 	//but because it's hard to do proper version checks, we will just read the files
 
+	envCache := os.Getenv("CACHE_TTL")
+	cacheTtl := time.Hour
+	if envCache != "" {
+		cacheTtl, err = time.ParseDuration(envCache)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	r := gin.Default()
 
 	if os.Getenv("MEMCACHE_SERVERS") != "" {
 		servers := os.Getenv("MEMCACHE_SERVERS")
 		username := os.Getenv("MEMCACHE_USER")
 		password := os.Getenv("MEMCACHE_PASS")
-		mcStore = persistence.NewMemcachedBinaryStore(servers, username, password, time.Minute*5)
+		mcStore = persistence.NewMemcachedBinaryStore(servers, username, password, cacheTtl)
 	}
 
 	if mcStore != nil {
-		r.GET("/:projectId/:modId", cache.CachePage(mcStore, persistence.DEFAULT, processRequest))
+		r.GET("/:projectId/:modId", cache.CachePage(mcStore, cacheTtl, processRequest))
 		r.GET("/:projectId/:modId/expire", expireCache)
 	} else {
 		r.GET("/:projectId/:modId", processRequest)
