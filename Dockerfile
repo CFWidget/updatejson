@@ -15,10 +15,14 @@ WORKDIR /updatejson
 
 EXPOSE 8080
 
-ENV DB_HOST="" \
-    DB_USER="" \
-    DB_PASS="" \
-    DB_DATABASE=""
+ENV   DB_USER="updatejson" \
+      DB_PASS="updatejson" \
+      DB_HOST="database" \
+      DB_DATABASE="widget" \
+      GIN_MODE="release" \
+      DB_MODE="release" \
+      MEMCACHE_SERVERS="" \
+      CORE_KEY=""
 
 ENTRYPOINT ["/go/bin/updatejson"]
 CMD [""]

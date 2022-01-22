@@ -1,28 +1,75 @@
 package main
 
-import "time"
+import (
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
+)
 
-type CurseForgeFile struct {
-	Id          int
-	FileDate    time.Time
-	DownloadUrl string
-	ReleaseType int
-	IsAvailable bool
-	GameVersion []string
+var _client = &http.Client{}
+
+func callCurseForge(requestUrl string) (*http.Response, error) {
+	key := os.Getenv("CORE_KEY")
+
+	path, err := url.Parse(requestUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	request := &http.Request{
+		Method: "GET",
+		URL:    path,
+		Header: http.Header{},
+	}
+	request.Header.Add("x-api-key", key)
+
+	if os.Getenv("DEBUG") == "true" {
+		log.Printf("Calling %s\n", path.String())
+	}
+
+	return _client.Do(request)
 }
 
-type CurseForgeProject struct {
-	Id         int
+type Response struct {
+}
+
+type FileResponse struct {
+	Response
+	Data []File
+}
+
+type ProjectResponse struct {
+	Response
+	Data Project
+}
+
+type File struct {
+	Id           int
+	FileDate     time.Time
+	DownloadUrl  string
+	ReleaseType  int
+	FileStatus   int
+	IsAvailable  bool
+	GameVersions []string
+	Modules      []Module
+}
+
+type Project struct {
+	Id     int
+	GameId int
+	Links  Links
+}
+
+type Links struct {
 	WebsiteUrl string
-	GameId     int
+	WikiUrl    string
+	IssuesUrl  string
+	SourceUrl  string
 }
 
-type Version struct {
-	Id          uint `gorm:"primaryKey;autoIncrement"`
-	CurseId     int  `gorm:"index"`
-	FileId      int  `gorm:"index"`
-	ModId       string
-	Version     string
-	Type        string
-	ReleaseDate time.Time
+type Module struct {
+	Name        string
+	Fingerprint uint64
 }

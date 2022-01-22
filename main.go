@@ -10,9 +10,9 @@ import (
 	"github.com/gin-contrib/cache/persistence"
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -21,8 +21,6 @@ import (
 	"time"
 )
 
-var client = &http.Client{}
-var db *gorm.DB
 var mcStore *persistence.MemcachedBinaryStore
 
 var ErrUnsupportedGame = errors.New("unsupported game")
@@ -33,26 +31,6 @@ func main() {
 
 	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
 	//but because it's hard to do proper version checks, we will just read the files
-
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", os.Getenv("DB_USER"), os.Getenv("DB_PASS"), os.Getenv("DB_HOST"), os.Getenv("DB_DATABASE"))
-	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	sqlDB, err := db.DB()
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
-
-	if err != nil {
-		panic(err)
-	}
-	if os.Getenv("DB_MODE") != "release" {
-		db = db.Debug()
-		fmt.Printf("Set DB_MODE to 'release' to disable debug database logger \n")
-	}
-
-	err = db.AutoMigrate(&Version{})
-	if err != nil {
-		panic(err)
-	}
 
 	r := gin.Default()
 
@@ -73,7 +51,7 @@ func main() {
 	r.StaticFile("/app.css", "app.css")
 	r.StaticFile("/app.js", "app.js")
 
-	fmt.Printf("Starting web services\n")
+	log.Printf("Starting web services\n")
 	err = r.Run()
 	if err != nil {
 		panic(err)
@@ -108,14 +86,14 @@ func processRequest(c *gin.Context) {
 
 func expireCache(c *gin.Context) {
 	key := strings.TrimSuffix(c.Request.RequestURI, "/expire")
-	fmt.Printf("Expiring %s\n", key)
+	log.Printf("Expiring %s\n", key)
 	_ = mcStore.Delete(cache.CreateKey(key))
 
 	c.Status(http.StatusAccepted)
 }
 
 func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
-	results := make(map[string]CurseForgeFile)
+	results := make(map[string]File)
 
 	project, err := getProject(projectId)
 	if err != nil {
@@ -133,7 +111,7 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 
 	for _, file := range curseforgeFiles {
 		//because each file can be associated to multiple versions, check each ne
-		for _, version := range file.GameVersion {
+		for _, version := range file.GameVersions {
 			if version == "Forge" {
 				continue
 			}
@@ -157,9 +135,8 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 		}
 	}
 
-
 	//get each unique file we need to download
-	files := make([]CurseForgeFile, 0)
+	files := make([]File, 0)
 
 	for _, v := range results {
 		exists := false
@@ -178,11 +155,11 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 	var wg sync.WaitGroup
 	for _, v := range files {
 		wg.Add(1)
-		go func(file CurseForgeFile) {
+		go func(file File) {
 			defer wg.Done()
 			versionInfo, err := getModVersion(project.Id, file)
 			if err != nil {
-				fmt.Printf("Error getting mod version from file: %s", err.Error())
+				log.Printf("Error getting mod version from file: %s", err.Error())
 			}
 			versionMap[file.Id] = versionInfo
 		}(v)
@@ -191,7 +168,7 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 
 	promos := &UpdateJson{
 		Promos:   map[string]string{},
-		HomePage: project.WebsiteUrl,
+		HomePage: project.Links.WebsiteUrl,
 	}
 
 	for k, v := range results {
@@ -207,107 +184,100 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 	return promos, nil
 }
 
-func getProject(projectId int) (CurseForgeProject, error) {
-	url := fmt.Sprintf("https://addons-ecs.forgesvc.net/api/v2/addon/%d", projectId)
-	fmt.Printf("[GET] %s\n", url)
-	response, err := client.Get(url)
+func getProject(projectId int) (Project, error) {
+	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d", projectId)
+
+	response, err := callCurseForge(url)
 	if err != nil {
-		return CurseForgeProject{}, err
+		return Project{}, err
 	}
 	defer response.Body.Close()
 
-	var project CurseForgeProject
 	if response.StatusCode == 404 {
-		return project, ErrInvalidProjectId
+		return Project{}, ErrInvalidProjectId
 	}
 
+	var project ProjectResponse
 	err = json.NewDecoder(response.Body).Decode(&project)
-	return project, err
+	return project.Data, err
 }
 
-func getFiles(projectId int) ([]CurseForgeFile, error) {
-	url := fmt.Sprintf("https://addons-ecs.forgesvc.net/api/v2/addon/%d/files", projectId)
-	fmt.Printf("[GET] %s\n", url)
-	response, err := client.Get(url)
+func getFiles(projectId int) ([]File, error) {
+	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?pageSize=1000", projectId)
+
+	response, err := callCurseForge(url)
 	if err != nil {
 		panic(err)
 	}
 	defer response.Body.Close()
 
-	var curseforgeFiles []CurseForgeFile
 	if response.StatusCode == 404 {
-		return curseforgeFiles, ErrInvalidProjectId
+		return nil, ErrInvalidProjectId
 	}
 
+	var curseforgeFiles FileResponse
 	err = json.NewDecoder(response.Body).Decode(&curseforgeFiles)
-	return curseforgeFiles, err
+	return curseforgeFiles.Data, err
 }
 
-func getModVersion(curseId int, curseFile CurseForgeFile) (*Version, error) {
+func getModVersion(curseId int, curseFile File) (*Version, error) {
+	db, err := Database()
+	if err != nil {
+		return nil, err
+	}
+
 	version := &Version{
 		CurseId: curseId,
 		FileId:  curseFile.Id,
 	}
-	err := db.Where(version).Find(&version).Error
+
+	err = db.Where(version).Find(&version).Error
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return version, err
 	}
 
 	if err == gorm.ErrRecordNotFound || version.Id == 0 {
-		fmt.Printf("[GET]: %s\n", curseFile.DownloadUrl)
-		response, err := http.Get(curseFile.DownloadUrl)
-		if err != nil {
-			fmt.Printf("Error downloading file: %s", err.Error())
-			return version, nil
-		}
-		defer response.Body.Close()
+		/*for _, m := range curseFile.Modules {
+			if m.Name != "META-INF" {
+				continue
+			}*/
 
-		buff := bytes.NewBuffer([]byte{})
-		size, err := io.Copy(buff, response.Body)
-		if err != nil {
-			fmt.Printf("Error downloading file: %s", err.Error())
-			return version, nil
-		}
-		response.Body.Close()
-
-		reader := bytes.NewReader(buff.Bytes())
-		r, err := zip.NewReader(reader, size)
-		if err != nil {
-			fmt.Printf("Error unzipping file: %s", err.Error())
-			return version, nil
-		}
-
-		var modInfo ModInfo
-
-		for _, file := range r.File {
-			info, exists := checkZipFile(file)
-			if exists {
-				modInfo = info
+			reader, size, err := downloadFile(curseFile.DownloadUrl)
+			if err != nil {
+				return version, err
 			}
-		}
 
-		version.ReleaseDate = curseFile.FileDate
-		version.Type = strconv.Itoa(curseFile.ReleaseType)
+			r, err := zip.NewReader(reader, size)
+			if err != nil {
+				return version, err
+			}
 
-		if len(modInfo.Mods) > 0 {
-			for _, z := range modInfo.Mods {
-				version.Id = 0 //resets the id so we can create a new row for this mod id
-				version.Version = z.Version
-				version.ModId = z.ModId
-				err = db.Create(version).Error
-				if err != nil {
-					fmt.Printf("Error saving file: %s", err.Error())
-					return version, nil
+			var modInfo ModInfo
+
+			for _, file := range r.File {
+				info, exists := checkZipFile(file)
+				if exists {
+					modInfo = info
 				}
 			}
-		} else {
-			//create with no real data, because it doesn't exist
-			err = db.Create(version).Error
-			if err != nil {
-				fmt.Printf("Error saving file: %s", err.Error())
-				return version, nil
+
+			version.ReleaseDate = curseFile.FileDate
+			version.Type = strconv.Itoa(curseFile.ReleaseType)
+
+			if len(modInfo.Mods) > 0 {
+				for _, z := range modInfo.Mods {
+					version.Id = 0 //resets the id so we can create a new row for this mod id
+					version.Version = z.Version
+					version.ModId = z.ModId
+					err = db.Create(version).Error
+					return version, err
+				}
 			}
-		}
+		//}
+
+		//create with no real data, because it doesn't exist
+		err = db.Create(version).Error
+		return version, err
 	}
 
 	return version, nil
@@ -318,23 +288,41 @@ func checkZipFile(file *zip.File) (ModInfo, bool) {
 	if file.Name == "META-INF/mods.toml" {
 		fileReader, err := file.Open()
 		if err != nil {
-			fmt.Printf("Error reading mods.toml: %s", err.Error())
+			log.Printf("Error reading mods.toml: %s", err.Error())
 			return modInfo, false
 		}
 		defer fileReader.Close()
 
 		data, err := io.ReadAll(fileReader)
 		if err != nil {
-			fmt.Printf("Error reading mods.toml: %s", err.Error())
+			log.Printf("Error reading mods.toml: %s", err.Error())
 			return modInfo, false
 		}
 
 		err = toml.Unmarshal(data, &modInfo)
 		if err != nil {
-			fmt.Printf("Error reading mods.toml: %s", err.Error())
+			log.Printf("Error reading mods.toml: %s", err.Error())
 			return modInfo, false
 		}
 		return modInfo, true
 	}
 	return modInfo, false
+}
+
+func downloadFile(url string) (io.ReaderAt, int64, error) {
+	log.Printf("[GET]: %s\n", url)
+	response, err := http.Get(url)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	defer response.Body.Close()
+
+	buff := bytes.NewBuffer([]byte{})
+	size, err := io.Copy(buff, response.Body)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return bytes.NewReader(buff.Bytes()), size, nil
 }

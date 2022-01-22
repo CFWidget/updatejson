@@ -1,6 +1,6 @@
 version: "3.3"
 services:
-  webapp:
+  updatejson:
     build:
       context: .
       dockerfile: Dockerfile
@@ -17,7 +17,13 @@ services:
       DB_DATABASE: widget
       GIN_MODE: release
       DB_MODE: release
-      MEMCACHE_SERVERS: "memcache"
+      MEMCACHE_SERVERS: memcache
+      CORE_KEY: "${CORE_KEY}"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.updatejson.rule=Host(`${HOST}`)"
+      - "traefik.http.routers.updatejson.entrypoints=websecure"
+      - "traefik.http.routers.updatejson.tls.certresolver=myresolver"
   database:
     image: mariadb
     restart: always
@@ -33,5 +39,32 @@ services:
     restart: always
     command: ["-m", "64m"]
 
+  traefik:
+    image: "traefik:v2.5"
+    depends_on:
+      - updatejson
+    command:
+      - "--log.level=debug"
+      #- "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.email=${EMAIL_ACME}"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+      #- "--certificatesresolvers.myresolver.acme.caServer=https://acme-staging-v02.api.letsencrypt.org/directory"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+    ports:
+      - "80:80"
+      - "443:443"
+      #- "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik:/letsencrypt"
+
 volumes:
   dbdata:
+  traefik:
