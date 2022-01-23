@@ -23,6 +23,7 @@ services:
       - "traefik.http.routers.updatejson.rule=Host(`${HOST}`)"
       - "traefik.http.routers.updatejson.entrypoints=websecure"
       - "traefik.http.routers.updatejson.tls.certresolver=myresolver"
+      -
   database:
     image: mariadb
     restart: always
@@ -33,6 +34,7 @@ services:
       MYSQL_RANDOM_ROOT_PASSWORD: "true"
     volumes:
       - "dbdata:/var/lib/mysql"
+      -
   memcache:
     image: memcached
     restart: always

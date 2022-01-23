@@ -21,6 +21,8 @@ import (
 	"time"
 )
 
+const PageSize = 50
+
 var mcStore *persistence.MemcachedBinaryStore
 
 var ErrUnsupportedGame = errors.New("unsupported game")
@@ -212,7 +214,32 @@ func getProject(projectId int) (Project, error) {
 }
 
 func getFiles(projectId int) ([]File, error) {
-	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?pageSize=1000", projectId)
+	files := make([]File, 0)
+	page := 0
+
+	for {
+		response, err := getFilesForPage(projectId, page)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(response.Data) > 0 {
+			files = append(files, response.Data...)
+		}
+
+		//if we don't have the same number as the page size, we have them all
+		if response.Pagination.ResultCount < PageSize {
+			break
+		}
+
+		page++
+	}
+
+	return files, nil
+}
+
+func getFilesForPage(projectId, page int) (FileResponse, error) {
+	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?index=%d&pageSize=%d", projectId, page * PageSize, PageSize)
 
 	response, err := callCurseForge(url)
 	if err != nil {
@@ -221,12 +248,12 @@ func getFiles(projectId int) ([]File, error) {
 	defer response.Body.Close()
 
 	if response.StatusCode == 404 {
-		return nil, ErrInvalidProjectId
+		return FileResponse{}, ErrInvalidProjectId
 	}
 
 	var curseforgeFiles FileResponse
 	err = json.NewDecoder(response.Body).Decode(&curseforgeFiles)
-	return curseforgeFiles.Data, err
+	return curseforgeFiles, err
 }
 
 func getModVersion(curseId int, curseFile File) (*Version, error) {
@@ -247,41 +274,41 @@ func getModVersion(curseId int, curseFile File) (*Version, error) {
 
 	if err == gorm.ErrRecordNotFound || version.Id == 0 {
 		/*for _, m := range curseFile.Modules {
-			if m.Name != "META-INF" {
-				continue
-			}*/
+		if m.Name != "META-INF" {
+			continue
+		}*/
 
-			reader, size, err := downloadFile(curseFile.DownloadUrl)
-			if err != nil {
+		reader, size, err := downloadFile(curseFile.DownloadUrl)
+		if err != nil {
+			return version, err
+		}
+
+		r, err := zip.NewReader(reader, size)
+		if err != nil {
+			return version, err
+		}
+
+		var modInfo ModInfo
+
+		for _, file := range r.File {
+			info, exists := checkZipFile(file)
+			if exists {
+				modInfo = info
+			}
+		}
+
+		version.ReleaseDate = curseFile.FileDate
+		version.Type = strconv.Itoa(curseFile.ReleaseType)
+
+		if len(modInfo.Mods) > 0 {
+			for _, z := range modInfo.Mods {
+				version.Id = 0 //resets the id so we can create a new row for this mod id
+				version.Version = z.Version
+				version.ModId = z.ModId
+				err = db.Create(version).Error
 				return version, err
 			}
-
-			r, err := zip.NewReader(reader, size)
-			if err != nil {
-				return version, err
-			}
-
-			var modInfo ModInfo
-
-			for _, file := range r.File {
-				info, exists := checkZipFile(file)
-				if exists {
-					modInfo = info
-				}
-			}
-
-			version.ReleaseDate = curseFile.FileDate
-			version.Type = strconv.Itoa(curseFile.ReleaseType)
-
-			if len(modInfo.Mods) > 0 {
-				for _, z := range modInfo.Mods {
-					version.Id = 0 //resets the id so we can create a new row for this mod id
-					version.Version = z.Version
-					version.ModId = z.ModId
-					err = db.Create(version).Error
-					return version, err
-				}
-			}
+		}
 		//}
 
 		//create with no real data, because it doesn't exist

@@ -38,6 +38,7 @@ type Response struct {
 type FileResponse struct {
 	Response
 	Data []File
+	Pagination Pagination
 }
 
 type ProjectResponse struct {
@@ -72,4 +73,11 @@ type Links struct {
 type Module struct {
 	Name        string
 	Fingerprint uint64
+}
+
+type Pagination struct {
+	Index       int
+	PageSize    int
+	ResultCount int
+	TotalCount  int
 }
