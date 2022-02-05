@@ -16,14 +16,14 @@ services:
       GIN_MODE: release
       DB_MODE: release
       MEMCACHE_SERVERS: memcache
-      CORE_KEY: "${CORE_KEY}"
+      CORE_KEY: "/run/secrets/core_key"
       CACHE_TTL: 1h
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.updatejson.rule=Host(`${HOST}`)"
       - "traefik.http.routers.updatejson.entrypoints=websecure"
       - "traefik.http.routers.updatejson.tls.certresolver=myresolver"
-      -
+     
   database:
     image: mariadb
     restart: always
@@ -34,7 +34,7 @@ services:
       MYSQL_RANDOM_ROOT_PASSWORD: "true"
     volumes:
       - "dbdata:/var/lib/mysql"
-      -
+      
   memcache:
     image: memcached
     restart: always
@@ -58,6 +58,7 @@ services:
       - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
       - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
       - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+      - "--accessLog.filePath=/logs/access.log"
     labels:
       - "traefik.http.routers.dashboard.rule=Host(`${HOST}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
       - "traefik.http.routers.dashboard.service=api@internal"
@@ -66,11 +67,17 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "8080:8080"
+      #- "8080:8080"
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "traefik:/letsencrypt"
+      - "logs:/logs"
+      
+secrets:
+  core_key:
+    external: true
 
 volumes:
   dbdata:
   traefik:
+  logs:
