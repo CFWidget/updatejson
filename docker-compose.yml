@@ -1,7 +1,7 @@
 version: "3.3"
 services:
   updatejson:
-    image: ghcr.io/lordralex/cfwidget
+    image: ghcr.io/lordralex/updatejson
     restart: always
     depends_on:
       - database
@@ -14,7 +14,7 @@ services:
       GIN_MODE: release
       DB_MODE: release
       MEMCACHE_SERVERS: memcache
-      CORE_KEY: "/run/secrets/core_key"
+      CORE_KEY: "${CORE_KEY}"
       CACHE_TTL: 1h
     labels:
       - "traefik.enable=true"
@@ -57,11 +57,11 @@ services:
       - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
       - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
       - "--accessLog.filePath=/logs/access.log"
-    labels:
-      - "traefik.http.routers.dashboard.rule=Host(`${HOST}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
-      - "traefik.http.routers.dashboard.service=api@internal"
-      - "traefik.http.routers.dashboard.middlewares=auth"
-      - "traefik.http.middlewares.auth.basicauth.users=${DASH_USER}:${DASH_PASS}"
+    #labels:
+    #  - "traefik.http.routers.dashboard.rule=Host(`${HOST}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
+    #  - "traefik.http.routers.dashboard.service=api@internal"
+    #  - "traefik.http.routers.dashboard.middlewares=auth"
+    #  - "traefik.http.middlewares.auth.basicauth.users=${DASH_USER}:${DASH_PASS}"
     ports:
       - "80:80"
       - "443:443"
@@ -70,10 +70,6 @@ services:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "traefik:/letsencrypt"
       - "logs:/logs"
-      
-secrets:
-  core_key:
-    external: true
 
 volumes:
   dbdata:
