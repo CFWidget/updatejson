@@ -111,6 +111,10 @@ func expireCache(c *gin.Context) {
 	log.Printf("Expiring %s\n", key)
 	_ = mcStore.Delete(cache.CreateKey(key))
 
+	key = strings.TrimSuffix(c.Request.RequestURI, "/expire") + "/references"
+	log.Printf("Expiring %s\n", key)
+	_ = mcStore.Delete(cache.CreateKey(key))
+
 	c.Status(http.StatusAccepted)
 }
 
