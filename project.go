@@ -13,3 +13,5 @@ type UpdateJson struct {
 	Promos   map[string]string `json:"promos"`
 	HomePage string            `json:"homepage"`
 }
+
+type References map[string]string

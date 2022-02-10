@@ -54,9 +54,12 @@ func main() {
 
 	if mcStore != nil {
 		r.GET("/:projectId/:modId", cache.CachePage(mcStore, cacheTtl, processRequest))
+		r.GET("/:projectId/:modId/references", cache.CachePage(mcStore, cacheTtl, getReferences))
 		r.GET("/:projectId/:modId/expire", expireCache)
 	} else {
 		r.GET("/:projectId/:modId", processRequest)
+		r.GET("/:projectId/:modId/references", getReferences)
+		r.GET("/:projectId/:modId/expire", expireCache)
 	}
 	r.StaticFile("/", "home.html")
 	r.StaticFile("/app.css", "app.css")
@@ -86,6 +89,9 @@ func processRequest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	} else if err == ErrUnsupportedGame {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	} else if err != nil {
+		log.Printf("Error: %s", err.Error())
+		c.Status(http.StatusInternalServerError)
 	}
 
 	if data != nil {
@@ -96,11 +102,74 @@ func processRequest(c *gin.Context) {
 }
 
 func expireCache(c *gin.Context) {
+	if mcStore == nil {
+		c.Status(http.StatusAccepted)
+		return
+	}
+
 	key := strings.TrimSuffix(c.Request.RequestURI, "/expire")
 	log.Printf("Expiring %s\n", key)
 	_ = mcStore.Delete(cache.CreateKey(key))
 
 	c.Status(http.StatusAccepted)
+}
+
+func getReferences(c *gin.Context) {
+	pid := c.Param("projectId")
+	modId := c.Param("modId")
+
+	var projectId int
+	var err error
+	if projectId, err = strconv.Atoi(pid); err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	db, err := Database()
+	if err != nil {
+		log.Printf("Error: %s", err.Error())
+		c.Status(http.StatusInternalServerError)
+	}
+
+	files := make([]Version, 0)
+	err = db.Model(&Version{}).Where("curse_id = ? AND mod_id = ?", projectId, modId).Find(&files).Error
+	if err != nil {
+		log.Printf("Error: %s", err.Error())
+		c.Status(http.StatusInternalServerError)
+	}
+
+	results := make(map[string]Version)
+	for _, file := range files {
+		for _, version := range strings.Split(file.GameVersions, ",") {
+			if version == "Forge" {
+				continue
+			}
+			key := version + "-latest"
+			existing, exists := results[key]
+			if !exists {
+				results[key] = file
+			} else if file.ReleaseDate.After(existing.ReleaseDate) {
+				results[key] = file
+			}
+
+			if file.Type == "1" {
+				key = version + "-recommended"
+				existing, exists = results[key]
+				if !exists {
+					results[key] = file
+				} else if file.ReleaseDate.After(existing.ReleaseDate) {
+					results[key] = file
+				}
+			}
+		}
+	}
+
+	references := References{}
+	for k, v := range results {
+		references[k] = v.Url
+	}
+
+	c.JSON(http.StatusOK, references)
 }
 
 func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
@@ -163,12 +232,13 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 	}
 
 	versionMap := make(map[int]*Version)
+
 	var wg sync.WaitGroup
 	for _, v := range files {
 		wg.Add(1)
 		go func(file File) {
 			defer wg.Done()
-			versionInfo, err := getModVersion(project.Id, file)
+			versionInfo, err := getModVersion(project, file, modId)
 			if err != nil {
 				log.Printf("Error getting mod version from file: %s", err.Error())
 			}
@@ -239,7 +309,7 @@ func getFiles(projectId int) ([]File, error) {
 }
 
 func getFilesForPage(projectId, page int) (FileResponse, error) {
-	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?index=%d&pageSize=%d", projectId, page * PageSize, PageSize)
+	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?index=%d&pageSize=%d", projectId, page*PageSize, PageSize)
 
 	response, err := callCurseForge(url)
 	if err != nil {
@@ -256,14 +326,14 @@ func getFilesForPage(projectId, page int) (FileResponse, error) {
 	return curseforgeFiles, err
 }
 
-func getModVersion(curseId int, curseFile File) (*Version, error) {
+func getModVersion(project Project, curseFile File, modId string) (*Version, error) {
 	db, err := Database()
 	if err != nil {
 		return nil, err
 	}
 
 	version := &Version{
-		CurseId: curseId,
+		CurseId: project.Id,
 		FileId:  curseFile.Id,
 	}
 
@@ -273,11 +343,6 @@ func getModVersion(curseId int, curseFile File) (*Version, error) {
 	}
 
 	if err == gorm.ErrRecordNotFound || version.Id == 0 {
-		/*for _, m := range curseFile.Modules {
-		if m.Name != "META-INF" {
-			continue
-		}*/
-
 		reader, size, err := downloadFile(curseFile.DownloadUrl)
 		if err != nil {
 			return version, err
@@ -301,22 +366,47 @@ func getModVersion(curseId int, curseFile File) (*Version, error) {
 		version.Type = strconv.Itoa(curseFile.ReleaseType)
 
 		if len(modInfo.Mods) > 0 {
+			var matchingVersion *Version
 			for _, z := range modInfo.Mods {
 				version.Id = 0 //resets the id so we can create a new row for this mod id
 				version.Version = z.Version
 				version.ModId = z.ModId
+				version.Url = fmt.Sprintf("%s/files/%d", project.Links.WebsiteUrl, curseFile.Id)
+				version.GameVersions = strings.Join(curseFile.GameVersions, ",")
 				err = db.Create(version).Error
-				return version, err
+				if err != nil {
+					return version, err
+				}
+				if version.ModId == modId {
+					matchingVersion = &Version{
+						Id:           version.Id,
+						CurseId:      version.CurseId,
+						FileId:       version.FileId,
+						GameVersions: version.GameVersions,
+						ModId:        version.ModId,
+						Version:      version.Version,
+						Type:         version.Type,
+						ReleaseDate:  version.ReleaseDate,
+						Url:          version.Url,
+					}
+				}
 			}
+
+			return matchingVersion, err
 		}
-		//}
 
 		//create with no real data, because it doesn't exist
 		err = db.Create(version).Error
 		return version, err
 	}
 
-	return version, nil
+	currentVersions := strings.Split(version.GameVersions, ",")
+	if !areEqual(currentVersions, curseFile.GameVersions) {
+		version.GameVersions = strings.Join(curseFile.GameVersions, ",")
+		err = db.Save(version).Error
+	}
+
+	return version, err
 }
 
 func checkZipFile(file *zip.File) (ModInfo, bool) {
@@ -361,4 +451,46 @@ func downloadFile(url string) (io.ReaderAt, int64, error) {
 	}
 
 	return bytes.NewReader(buff.Bytes()), size, nil
+}
+
+func areEqual(arr1, arr2 []string) bool {
+	if arr1 == nil && arr2 == nil {
+		return true
+	}
+
+	if arr1 == nil && arr2 != nil {
+		return false
+	}
+
+	if arr2 == nil && arr1 != nil {
+		return false
+	}
+
+	for _, a := range arr1 {
+		exists := false
+		for _, b := range arr2 {
+			if a == b {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			return false
+		}
+	}
+
+	for _, a := range arr2 {
+		exists := false
+		for _, b := range arr1 {
+			if a == b {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			return false
+		}
+	}
+
+	return true
 }
