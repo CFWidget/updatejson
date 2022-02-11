@@ -238,6 +238,7 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 	versionMap := make(map[int]*Version)
 
 	var wg sync.WaitGroup
+	var writer sync.Mutex
 	for _, v := range files {
 		wg.Add(1)
 		go func(file File) {
@@ -246,6 +247,8 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 			if err != nil {
 				log.Printf("Error getting mod version from file: %s", err.Error())
 			}
+			writer.Lock()
+			defer writer.Unlock()
 			versionMap[file.Id] = versionInfo
 		}(v)
 	}
