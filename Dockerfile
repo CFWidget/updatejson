@@ -21,7 +21,6 @@ ENV   DB_USER="updatejson" \
       DB_DATABASE="widget" \
       GIN_MODE="release" \
       DB_MODE="release" \
-      MEMCACHE_SERVERS="" \
       CORE_KEY="" \
       CACHE_TTL="1h"
 

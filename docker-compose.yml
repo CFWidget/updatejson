@@ -5,7 +5,6 @@ services:
     restart: always
     depends_on:
       - database
-      - memcache
     environment:
       DB_USER: updatejson
       DB_PASS: updatejson
@@ -13,7 +12,6 @@ services:
       DB_DATABASE: widget
       GIN_MODE: release
       DB_MODE: release
-      MEMCACHE_SERVERS: memcache
       CORE_KEY: "${CORE_KEY}"
       CACHE_TTL: 1h
     labels:
@@ -21,7 +19,7 @@ services:
       - "traefik.http.routers.updatejson.rule=Host(`${HOST}`)"
       - "traefik.http.routers.updatejson.entrypoints=websecure"
       - "traefik.http.routers.updatejson.tls.certresolver=myresolver"
-     
+
   database:
     image: mariadb
     restart: always
@@ -32,11 +30,6 @@ services:
       MYSQL_RANDOM_ROOT_PASSWORD: "true"
     volumes:
       - "dbdata:/var/lib/mysql"
-      
-  memcache:
-    image: memcached
-    restart: always
-    command: ["-m", "64m"]
 
   traefik:
     image: "traefik:v2.5"

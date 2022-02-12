@@ -6,15 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gin-contrib/cache"
-	"github.com/gin-contrib/cache/persistence"
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml"
 	"gorm.io/gorm"
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,8 +19,6 @@ import (
 )
 
 const PageSize = 50
-
-var mcStore *persistence.MemcachedBinaryStore
 
 var ErrUnsupportedGame = errors.New("unsupported game")
 var ErrInvalidProjectId = errors.New("invalid project id")
@@ -34,33 +29,12 @@ func main() {
 	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
 	//but because it's hard to do proper version checks, we will just read the files
 
-	envCache := os.Getenv("CACHE_TTL")
-	cacheTtl := time.Hour
-	if envCache != "" {
-		cacheTtl, err = time.ParseDuration(envCache)
-		if err != nil {
-			panic(err)
-		}
-	}
-
 	r := gin.Default()
 
-	if os.Getenv("MEMCACHE_SERVERS") != "" {
-		servers := os.Getenv("MEMCACHE_SERVERS")
-		username := os.Getenv("MEMCACHE_USER")
-		password := os.Getenv("MEMCACHE_PASS")
-		mcStore = persistence.NewMemcachedBinaryStore(servers, username, password, cacheTtl)
-	}
+	r.GET("/:projectId/:modId", processRequest)
+	r.GET("/:projectId/:modId/references", getReferences)
+	r.GET("/:projectId/:modId/expire", expireCache)
 
-	if mcStore != nil {
-		r.GET("/:projectId/:modId", cache.CachePage(mcStore, cacheTtl, processRequest))
-		r.GET("/:projectId/:modId/references", cache.CachePage(mcStore, cacheTtl, getReferences))
-		r.GET("/:projectId/:modId/expire", expireCache)
-	} else {
-		r.GET("/:projectId/:modId", processRequest)
-		r.GET("/:projectId/:modId/references", getReferences)
-		r.GET("/:projectId/:modId/expire", expireCache)
-	}
 	r.StaticFile("/", "home.html")
 	r.StaticFile("/app.css", "app.css")
 	r.StaticFile("/app.js", "app.js")
@@ -83,97 +57,112 @@ func processRequest(c *gin.Context) {
 		return
 	}
 
-	data, err := getUpdateJson(projectId, modId)
+	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
+	if !exists {
+		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
+		data, err := getUpdateJson(projectId, modId)
 
-	if err == ErrInvalidProjectId {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-	} else if err == ErrUnsupportedGame {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-	} else if err != nil {
-		log.Printf("Error: %s", err.Error())
-		c.Status(http.StatusInternalServerError)
-	}
+		if err == ErrInvalidProjectId || err == ErrUnsupportedGame {
+			d := map[string]string{"error": err.Error()}
+			SetInCache(c.Request.URL.RequestURI(), http.StatusOK, d)
+			c.JSON(http.StatusBadRequest, d)
+		} else if err != nil {
+			log.Printf("Error: %s", err.Error())
+			//do not cache this, we don't want it preserved
+			c.Status(http.StatusInternalServerError)
+		}
 
-	if data != nil {
-		c.JSON(http.StatusOK, data)
+		if data != nil {
+			SetInCache(c.Request.URL.RequestURI(), http.StatusOK, *data)
+			c.JSON(http.StatusOK, data)
+		} else {
+			SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
+			c.Status(http.StatusNotFound)
+		}
 	} else {
-		c.Status(http.StatusNotFound)
+		c.Header("MemCache-Expires-At", cacheData.ExpireAt.UTC().Format(time.RFC3339))
+		c.JSON(cacheData.Status, cacheData.Data)
 	}
 }
 
 func expireCache(c *gin.Context) {
-	if mcStore == nil {
-		c.Status(http.StatusAccepted)
-		return
-	}
-
 	key := strings.TrimSuffix(c.Request.RequestURI, "/expire")
 	log.Printf("Expiring %s\n", key)
-	_ = mcStore.Delete(cache.CreateKey(key))
+	RemoveFromCache(key)
 
 	key = strings.TrimSuffix(c.Request.RequestURI, "/expire") + "/references"
 	log.Printf("Expiring %s\n", key)
-	_ = mcStore.Delete(cache.CreateKey(key))
+	RemoveFromCache(key)
 
 	c.Status(http.StatusAccepted)
 }
 
 func getReferences(c *gin.Context) {
-	pid := c.Param("projectId")
-	modId := c.Param("modId")
+	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
+	if !exists {
+		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
 
-	var projectId int
-	var err error
-	if projectId, err = strconv.Atoi(pid); err != nil {
-		c.Status(http.StatusNotFound)
-		return
-	}
+		pid := c.Param("projectId")
+		modId := c.Param("modId")
 
-	db, err := Database()
-	if err != nil {
-		log.Printf("Error: %s", err.Error())
-		c.Status(http.StatusInternalServerError)
-	}
+		var projectId int
+		var err error
+		if projectId, err = strconv.Atoi(pid); err != nil {
+			SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
+			c.Status(http.StatusNotFound)
+			return
+		}
 
-	files := make([]Version, 0)
-	err = db.Model(&Version{}).Where("curse_id = ? AND mod_id = ?", projectId, modId).Find(&files).Error
-	if err != nil {
-		log.Printf("Error: %s", err.Error())
-		c.Status(http.StatusInternalServerError)
-	}
+		db, err := Database()
+		if err != nil {
+			log.Printf("Error: %s", err.Error())
+			c.Status(http.StatusInternalServerError)
+		}
 
-	results := make(map[string]Version)
-	for _, file := range files {
-		for _, version := range strings.Split(file.GameVersions, ",") {
-			if version == "Forge" {
-				continue
-			}
-			key := version + "-latest"
-			existing, exists := results[key]
-			if !exists {
-				results[key] = file
-			} else if file.ReleaseDate.After(existing.ReleaseDate) {
-				results[key] = file
-			}
+		files := make([]Version, 0)
+		err = db.Model(&Version{}).Where("curse_id = ? AND mod_id = ?", projectId, modId).Find(&files).Error
+		if err != nil {
+			log.Printf("Error: %s", err.Error())
+			c.Status(http.StatusInternalServerError)
+		}
 
-			if file.Type == "1" {
-				key = version + "-recommended"
-				existing, exists = results[key]
+		results := make(map[string]Version)
+		for _, file := range files {
+			for _, version := range strings.Split(file.GameVersions, ",") {
+				if version == "Forge" {
+					continue
+				}
+				key := version + "-latest"
+				existing, exists := results[key]
 				if !exists {
 					results[key] = file
 				} else if file.ReleaseDate.After(existing.ReleaseDate) {
 					results[key] = file
 				}
+
+				if file.Type == "1" {
+					key = version + "-recommended"
+					existing, exists = results[key]
+					if !exists {
+						results[key] = file
+					} else if file.ReleaseDate.After(existing.ReleaseDate) {
+						results[key] = file
+					}
+				}
 			}
 		}
-	}
 
-	references := References{}
-	for k, v := range results {
-		references[k] = v.Url
-	}
+		references := References{}
+		for k, v := range results {
+			references[k] = v.Url
+		}
 
-	c.JSON(http.StatusOK, references)
+		SetInCache(c.Request.URL.RequestURI(), http.StatusOK, references)
+		c.JSON(http.StatusOK, references)
+	} else {
+		c.Header("MemCache-Expires-At", cacheData.ExpireAt.UTC().Format(time.RFC3339))
+		c.JSON(cacheData.Status, cacheData.Data)
+	}
 }
 
 func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
