@@ -1,7 +1,7 @@
 version: "3.3"
 services:
   updatejson:
-    image: ghcr.io/lordralex/updatejson
+    image: ghcr.io/cfwidget/updatejson
     restart: always
     depends_on:
       - database
