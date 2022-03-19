@@ -8818,21 +8818,36 @@ img {
     height: 95vh
 }
 
+.vh-50 {
+    height: 50vh
+}
+
 @media screen and (min-width: 30em) {
     .vh-95-ns {
         height: 95vh
+    }
+
+    .vh-50-ns {
+        height: 50vh
     }
 }
 
 @media screen and (min-width: 30em) and (max-width: 60em) {
     .vh-95-m {
-        height: 95vh
+        height: 50vh
+    }
+    .vh-95-m {
+        height: 50vh
     }
 }
 
 @media screen and (min-width: 60em) {
     .vh-95-l {
         height: 95vh
+    }
+
+    .vh-50-l {
+        height: 50vh
     }
 }
 
