@@ -412,9 +412,6 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 }
 
 func checkZipFile(file *zip.File, ctx context.Context) (ModInfo, bool) {
-	span, ctx := apm.StartSpan(ctx, "readZip", "custom")
-	defer span.End()
-
 	var modInfo ModInfo
 	if file.Name == "META-INF/mods.toml" {
 		fileReader, err := file.Open()
