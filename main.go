@@ -3,11 +3,14 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml"
+	"go.elastic.co/apm/module/apmgin/v2"
+	"go.elastic.co/apm/v2"
 	"gorm.io/gorm"
 	"io"
 	"log"
@@ -28,8 +31,10 @@ func main() {
 
 	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
 	//but because it's hard to do proper version checks, we will just read the files
+	_ = apm.DefaultTracer()
 
 	r := gin.Default()
+	r.Use(apmgin.Middleware(r))
 
 	r.GET("/:projectId/:modId", processRequest)
 	r.GET("/:projectId/:modId/references", getReferences)
@@ -60,7 +65,7 @@ func processRequest(c *gin.Context) {
 	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
 	if !exists {
 		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
-		data, err := getUpdateJson(projectId, modId)
+		data, err := getUpdateJson(projectId, modId, c.Request.Context())
 
 		if err == ErrInvalidProjectId || err == ErrUnsupportedGame {
 			d := map[string]string{"error": err.Error()}
@@ -70,6 +75,7 @@ func processRequest(c *gin.Context) {
 			log.Printf("Error: %s", err.Error())
 			//do not cache this, we don't want it preserved
 			c.Status(http.StatusInternalServerError)
+			return
 		}
 
 		if data != nil {
@@ -87,11 +93,9 @@ func processRequest(c *gin.Context) {
 
 func expireCache(c *gin.Context) {
 	key := strings.TrimSuffix(c.Request.RequestURI, "/expire")
-	log.Printf("Expiring %s\n", key)
 	RemoveFromCache(key)
 
 	key = strings.TrimSuffix(c.Request.RequestURI, "/expire") + "/references"
-	log.Printf("Expiring %s\n", key)
 	RemoveFromCache(key)
 
 	c.Status(http.StatusAccepted)
@@ -113,10 +117,11 @@ func getReferences(c *gin.Context) {
 			return
 		}
 
-		db, err := Database()
+		db, err := Database(c.Request.Context())
 		if err != nil {
 			log.Printf("Error: %s", err.Error())
 			c.Status(http.StatusInternalServerError)
+			return
 		}
 
 		files := make([]Version, 0)
@@ -124,6 +129,7 @@ func getReferences(c *gin.Context) {
 		if err != nil {
 			log.Printf("Error: %s", err.Error())
 			c.Status(http.StatusInternalServerError)
+			return
 		}
 
 		results := make(map[string]Version)
@@ -165,10 +171,10 @@ func getReferences(c *gin.Context) {
 	}
 }
 
-func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
+func getUpdateJson(projectId int, modId string, ctx context.Context) (*UpdateJson, error) {
 	results := make(map[string]File)
 
-	project, err := getProject(projectId)
+	project, err := getProject(projectId, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +183,7 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 		return nil, ErrUnsupportedGame
 	}
 
-	curseforgeFiles, err := getFiles(project.Id)
+	curseforgeFiles, err := getFiles(project.Id, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +238,7 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 		wg.Add(1)
 		go func(file File) {
 			defer wg.Done()
-			versionInfo, err := getModVersion(project, file, modId)
+			versionInfo, err := getModVersion(project, file, modId, ctx)
 			if err != nil {
 				log.Printf("Error getting mod version from file: %s", err.Error())
 			}
@@ -261,10 +267,10 @@ func getUpdateJson(projectId int, modId string) (*UpdateJson, error) {
 	return promos, nil
 }
 
-func getProject(projectId int) (Project, error) {
+func getProject(projectId int, ctx context.Context) (Project, error) {
 	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d", projectId)
 
-	response, err := callCurseForge(url)
+	response, err := callCurseForge(url, ctx)
 	if err != nil {
 		return Project{}, err
 	}
@@ -279,12 +285,12 @@ func getProject(projectId int) (Project, error) {
 	return project.Data, err
 }
 
-func getFiles(projectId int) ([]File, error) {
+func getFiles(projectId int, ctx context.Context) ([]File, error) {
 	files := make([]File, 0)
 	page := 0
 
 	for {
-		response, err := getFilesForPage(projectId, page)
+		response, err := getFilesForPage(projectId, page, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -304,10 +310,10 @@ func getFiles(projectId int) ([]File, error) {
 	return files, nil
 }
 
-func getFilesForPage(projectId, page int) (FileResponse, error) {
+func getFilesForPage(projectId, page int, ctx context.Context) (FileResponse, error) {
 	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?index=%d&pageSize=%d", projectId, page*PageSize, PageSize)
 
-	response, err := callCurseForge(url)
+	response, err := callCurseForge(url, ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -322,8 +328,8 @@ func getFilesForPage(projectId, page int) (FileResponse, error) {
 	return curseforgeFiles, err
 }
 
-func getModVersion(project Project, curseFile File, modId string) (*Version, error) {
-	db, err := Database()
+func getModVersion(project Project, curseFile File, modId string, ctx context.Context) (*Version, error) {
+	db, err := Database(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +345,7 @@ func getModVersion(project Project, curseFile File, modId string) (*Version, err
 	}
 
 	if err == gorm.ErrRecordNotFound || version.Id == 0 {
-		reader, size, err := downloadFile(curseFile.DownloadUrl)
+		reader, size, err := downloadFile(curseFile.DownloadUrl, ctx)
 		if err != nil {
 			return version, err
 		}
@@ -352,7 +358,7 @@ func getModVersion(project Project, curseFile File, modId string) (*Version, err
 		var modInfo ModInfo
 
 		for _, file := range r.File {
-			info, exists := checkZipFile(file)
+			info, exists := checkZipFile(file, ctx)
 			if exists {
 				modInfo = info
 			}
@@ -405,7 +411,10 @@ func getModVersion(project Project, curseFile File, modId string) (*Version, err
 	return version, err
 }
 
-func checkZipFile(file *zip.File) (ModInfo, bool) {
+func checkZipFile(file *zip.File, ctx context.Context) (ModInfo, bool) {
+	span, ctx := apm.StartSpan(ctx, "readZip", "custom")
+	defer span.End()
+
 	var modInfo ModInfo
 	if file.Name == "META-INF/mods.toml" {
 		fileReader, err := file.Open()
@@ -431,9 +440,8 @@ func checkZipFile(file *zip.File) (ModInfo, bool) {
 	return modInfo, false
 }
 
-func downloadFile(url string) (io.ReaderAt, int64, error) {
-	log.Printf("[GET]: %s\n", url)
-	response, err := http.Get(url)
+func downloadFile(url string, ctx context.Context) (io.ReaderAt, int64, error) {
+	response, err := download(url, ctx)
 	if err != nil {
 		return nil, 0, err
 	}

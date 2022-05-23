@@ -1,11 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"gorm.io/driver/mysql"
+	"github.com/cfwidget/updatejson/env"
+	mysql "go.elastic.co/apm/module/apmgormv2/v2/driver/mysql"
 	"gorm.io/gorm"
 	"log"
-	"os"
 	"sync"
 	"time"
 )
@@ -13,11 +14,11 @@ import (
 var _db *gorm.DB
 var locker sync.Once
 
-func Database() (*gorm.DB, error) {
+func Database(ctx context.Context) (*gorm.DB, error) {
 	locker.Do(func() {
 		var err error
 
-		dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", os.Getenv("DB_USER"), os.Getenv("DB_PASS"), os.Getenv("DB_HOST"), os.Getenv("DB_DATABASE"))
+		dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", env.Get("DB_USER"), env.Get("DB_PASS"), env.Get("DB_HOST"), env.Get("DB_DATABASE"))
 		_db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 		if err != nil {
 			log.Printf("Error running DB migration: %s", err.Error())
@@ -29,7 +30,7 @@ func Database() (*gorm.DB, error) {
 		sqlDB.SetMaxOpenConns(100)
 		sqlDB.SetConnMaxLifetime(time.Hour)
 
-		if os.Getenv("DB_MODE") != "release" {
+		if env.Get("DB_MODE") != "release" {
 			_db = _db.Debug()
 			fmt.Printf("Set DB_MODE to 'release' to disable debug database logger \n")
 		}
@@ -40,5 +41,5 @@ func Database() (*gorm.DB, error) {
 		}
 	})
 
-	return _db, nil
+	return _db.WithContext(ctx), nil
 }
