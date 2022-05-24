@@ -1,9 +1,9 @@
-FROM golang:1.17-alpine AS builder
+FROM golang:1.18-alpine AS builder
 
 WORKDIR /updatejson
 COPY . .
 
-RUN go build -o /go/bin/updatejson github.com/lordralex/updatejson
+RUN go build -buildvcs=false -o /go/bin/updatejson github.com/cfwidget/updatejson
 
 FROM alpine
 COPY --from=builder /go/bin/updatejson /go/bin/updatejson
