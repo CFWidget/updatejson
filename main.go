@@ -26,6 +26,8 @@ const PageSize = 50
 var ErrUnsupportedGame = errors.New("unsupported game")
 var ErrInvalidProjectId = errors.New("invalid project id")
 
+var invalidVersions = []string{"Forge", "Fabric", "Quilt", "Rift"}
+
 func main() {
 	var err error
 
@@ -65,7 +67,11 @@ func processRequest(c *gin.Context) {
 	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
 	if !exists {
 		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
-		data, err := getUpdateJson(projectId, modId, c.Request.Context())
+		loader := c.Query("ml")
+		if loader == "" {
+			loader = "forge"
+		}
+		data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
 
 		if err == ErrInvalidProjectId || err == ErrUnsupportedGame {
 			d := map[string]string{"error": err.Error()}
@@ -108,6 +114,10 @@ func getReferences(c *gin.Context) {
 
 		pid := c.Param("projectId")
 		modId := c.Param("modId")
+		loader := c.Query("ml")
+		if loader == "" {
+			loader = "forge"
+		}
 
 		var projectId int
 		var err error
@@ -134,8 +144,13 @@ func getReferences(c *gin.Context) {
 
 		results := make(map[string]Version)
 		for _, file := range files {
-			for _, version := range strings.Split(file.GameVersions, ",") {
-				if version == "Forge" {
+			versions := strings.Split(file.GameVersions, ",")
+			if !contains(loader, versions) {
+				continue
+			}
+
+			for _, version := range versions {
+				if contains(version, invalidVersions) {
 					continue
 				}
 				key := version + "-latest"
@@ -171,7 +186,7 @@ func getReferences(c *gin.Context) {
 	}
 }
 
-func getUpdateJson(projectId int, modId string, ctx context.Context) (*UpdateJson, error) {
+func getUpdateJson(projectId int, modId string, loader string, ctx context.Context) (*UpdateJson, error) {
 	results := make(map[string]File)
 
 	project, err := getProject(projectId, ctx)
@@ -188,10 +203,18 @@ func getUpdateJson(projectId int, modId string, ctx context.Context) (*UpdateJso
 		return nil, err
 	}
 
+	filteredFiles := make([]File, 0)
+
 	for _, file := range curseforgeFiles {
-		//because each file can be associated to multiple versions, check each ne
+		if contains(loader, file.GameVersions) {
+			filteredFiles = append(filteredFiles, file)
+		}
+	}
+
+	for _, file := range filteredFiles {
+		//because each file can be associated to multiple versions, check each one
 		for _, version := range file.GameVersions {
-			if version == "Forge" {
+			if contains(version, invalidVersions) {
 				continue
 			}
 			key := version + "-latest"
@@ -416,24 +439,49 @@ func checkZipFile(file *zip.File, ctx context.Context) (ModInfo, bool) {
 	if file.Name == "META-INF/mods.toml" {
 		fileReader, err := file.Open()
 		if err != nil {
-			log.Printf("Error reading mods.toml: %s", err.Error())
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return modInfo, false
 		}
 		defer fileReader.Close()
 
 		data, err := io.ReadAll(fileReader)
 		if err != nil {
-			log.Printf("Error reading mods.toml: %s", err.Error())
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return modInfo, false
 		}
 
 		err = toml.Unmarshal(data, &modInfo)
 		if err != nil {
-			log.Printf("Error reading mods.toml: %s", err.Error())
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return modInfo, false
 		}
 		return modInfo, true
 	}
+
+	if file.Name == "fabric.mod.json" || file.Name == "quilt.mod.json" {
+		fileReader, err := file.Open()
+		if err != nil {
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
+			return modInfo, false
+		}
+		defer fileReader.Close()
+
+		data, err := io.ReadAll(fileReader)
+		if err != nil {
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
+			return modInfo, false
+		}
+
+		var mod Mod
+		err = json.Unmarshal(data, &mod)
+		modInfo = ModInfo{Mods: []Mod{mod}}
+		if err != nil {
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
+			return modInfo, false
+		}
+		return modInfo, true
+	}
+
 	return modInfo, false
 }
 
@@ -494,4 +542,15 @@ func areEqual(arr1, arr2 []string) bool {
 	}
 
 	return true
+}
+
+func contains(needle string, haystack []string) bool {
+	needle = strings.ToLower(needle)
+	for _, v := range haystack {
+		if strings.ToLower(v) == needle {
+			return true
+		}
+	}
+
+	return false
 }
