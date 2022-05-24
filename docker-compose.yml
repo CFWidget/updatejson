@@ -20,11 +20,13 @@ services:
     networks:
       - default
       - ingress_default
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.${SERVICE_NAME}.rule=Host(`${HOST}`)"
-      - "traefik.http.routers.${SERVICE_NAME}.entrypoints=websecure"
-      - "traefik.http.routers.${SERVICE_NAME}.tls.certresolver=myresolver"
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.${SERVICE_NAME}.rule=Host(`${HOST}`)"
+        - "traefik.http.routers.${SERVICE_NAME}.entrypoints=websecure"
+        - "traefik.http.routers.${SERVICE_NAME}.tls.certresolver=myresolver"
+        - "traefik.http.services.${SERVICE_NAME}.loadbalancer.server.port=8080"
 
   database:
     image: mariadb
