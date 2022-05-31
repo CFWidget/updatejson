@@ -1,17 +1,23 @@
 package main
 
 import (
+	"context"
+	"github.com/cfwidget/updatejson/env"
+	"go.elastic.co/apm/module/apmhttp/v2"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 )
 
-var _client = &http.Client{}
+var _client *http.Client
 
-func callCurseForge(requestUrl string) (*http.Response, error) {
-	key := os.Getenv("CORE_KEY")
+func init() {
+	_client = apmhttp.WrapClient(&http.Client{})
+}
+
+func callCurseForge(requestUrl string, ctx context.Context) (*http.Response, error) {
+	key := env.Get("CORE_KEY")
 
 	path, err := url.Parse(requestUrl)
 	if err != nil {
@@ -25,11 +31,30 @@ func callCurseForge(requestUrl string) (*http.Response, error) {
 	}
 	request.Header.Add("x-api-key", key)
 
-	if os.Getenv("DEBUG") == "true" {
+	if env.GetBool("DEBUG") {
 		log.Printf("Calling %s\n", path.String())
 	}
 
-	return _client.Do(request)
+	return _client.Do(request.WithContext(ctx))
+}
+
+func download(requestUrl string, ctx context.Context) (*http.Response, error) {
+	path, err := url.Parse(requestUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	request := &http.Request{
+		Method: "GET",
+		URL:    path,
+		Header: http.Header{},
+	}
+
+	if env.GetBool("DEBUG") {
+		log.Printf("[OUTBOUND] [%s] %s\n", request.Method, path.String())
+	}
+
+	return _client.Do(request.WithContext(ctx))
 }
 
 type Response struct {
@@ -37,7 +62,7 @@ type Response struct {
 
 type FileResponse struct {
 	Response
-	Data []File
+	Data       []File
 	Pagination Pagination
 }
 

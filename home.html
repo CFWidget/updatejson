@@ -103,6 +103,22 @@
 }
       </pre>
     </p>
+    <p>
+        For non-Forge mods, there is no defined structure offered by other teams. As such, we return the same
+        JSON structure. To get data for those other mods, you can pass the modloader name to the URL in the <code>ml</code>
+        query param.
+        Supported loaders:
+        <ul class="list pa0">
+            <li>- Fabric</li>
+            <li>- Quilt</li>
+        </ul>
+    </p>
+    <p>
+        <span>Example: </span>
+        <code class="roboto-mono f6" style="word-break: break-all;">
+            <span class="b">GET</span> https://forge.curseupdate.com/32274/journeymap?ml=fabric
+        </code>
+    </p>
     <h2 id="documentation:responses">Responses</h2>
     <p>
         Each request response is a JSON document containing either project version data or an error.

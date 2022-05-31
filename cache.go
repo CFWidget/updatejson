@@ -1,7 +1,7 @@
 package main
 
 import (
-	"os"
+	"github.com/cfwidget/updatejson/env"
 	"sync"
 	"time"
 )
@@ -16,7 +16,7 @@ var cacheTtl time.Duration
 var memcache = sync.Map{}
 
 func init() {
-	envCache := os.Getenv("CACHE_TTL")
+	envCache := env.Get("CACHE_TTL")
 	cacheTtl = time.Hour
 	if envCache != "" {
 		var err error

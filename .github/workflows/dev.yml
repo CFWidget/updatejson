@@ -1,13 +1,8 @@
-name: Build Service
+name: Build Service - Dev
 on:
   push:
     branches:
-      - master
-  workflow_dispatch:
-  
-concurrency: 
-  group: production
-  cancel-in-progress: true
+      - dev
 
 jobs:
   build:
@@ -41,15 +36,15 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ env.REPO }}:latest
+          tags: ghcr.io/${{ env.REPO }}:dev
           platforms: linux/amd64,linux/arm64
-
+  
   deployment:
     runs-on: ubuntu-latest
     needs: build
     environment:
-      name: production
-      url: https://forge.curseupdate.com/
+      name: Dev
+      url: https://dev.forge.curseupdate.com/
     steps:
       - name: Deploy
         run:
