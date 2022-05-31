@@ -53,4 +53,4 @@ jobs:
     steps:
       - name: Deploy
         run:
-          curl -X POST --insecure ${{ secrets.POST_URL_PROD }}
+          curl -X POST --insecure ${{ secrets.POST_URL }}
