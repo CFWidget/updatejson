@@ -3,6 +3,11 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
+  
+concurrency: 
+  group: production
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -38,3 +43,14 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.REPO }}:latest
           platforms: linux/amd64,linux/arm64
+
+  deployment:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: production
+      url: https://forge.curseupdate.com/
+    steps:
+      - name: Deploy
+        run:
+          curl -X POST --insecure ${{ secrets.POST_URL_PROD }}
