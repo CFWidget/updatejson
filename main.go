@@ -56,6 +56,19 @@ func main() {
 func processRequest(c *gin.Context) {
 	pid := c.Param("projectId")
 	modId := c.Param("modId")
+	loader := c.Query("ml")
+	if loader == "" {
+		loader = "forge"
+	}
+
+	loader = strings.ToLower(loader)
+
+	trans := apm.TransactionFromContext(c.Request.Context())
+	if trans != nil {
+		trans.TransactionData.Context.SetLabel("projectId", pid)
+		trans.TransactionData.Context.SetLabel("modId", strings.ToLower(modId))
+		trans.TransactionData.Context.SetLabel("loader", strings.ToLower(loader))
+	}
 
 	var projectId int
 	var err error
@@ -66,11 +79,12 @@ func processRequest(c *gin.Context) {
 
 	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
 	if !exists {
-		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
-		loader := c.Query("ml")
-		if loader == "" {
-			loader = "forge"
+		if trans != nil {
+			trans.TransactionData.Context.SetLabel("cached", false)
 		}
+
+		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
+
 		data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
 
 		if err == ErrInvalidProjectId || err == ErrUnsupportedGame {
@@ -93,6 +107,9 @@ func processRequest(c *gin.Context) {
 		}
 	} else {
 		c.Header("MemCache-Expires-At", cacheData.ExpireAt.UTC().Format(time.RFC3339))
+		if trans != nil {
+			trans.TransactionData.Context.SetLabel("cached", true)
+		}
 		c.JSON(cacheData.Status, cacheData.Data)
 	}
 }
@@ -108,15 +125,28 @@ func expireCache(c *gin.Context) {
 }
 
 func getReferences(c *gin.Context) {
+	pid := c.Param("projectId")
+	modId := c.Param("modId")
+	loader := c.Query("ml")
+	if loader == "" {
+		loader = "forge"
+	}
+
+	loader = strings.ToLower(loader)
+
+	trans := apm.TransactionFromContext(c.Request.Context())
+	if trans != nil {
+		trans.TransactionData.Context.SetLabel("projectId", pid)
+		trans.TransactionData.Context.SetLabel("modId", strings.ToLower(modId))
+		trans.TransactionData.Context.SetLabel("loader", strings.ToLower(loader))
+	}
+
 	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
 	if !exists {
 		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
 
-		pid := c.Param("projectId")
-		modId := c.Param("modId")
-		loader := c.Query("ml")
-		if loader == "" {
-			loader = "forge"
+		if trans != nil {
+			trans.TransactionData.Context.SetLabel("cached", false)
 		}
 
 		var projectId int
@@ -182,6 +212,9 @@ func getReferences(c *gin.Context) {
 		c.JSON(http.StatusOK, references)
 	} else {
 		c.Header("MemCache-Expires-At", cacheData.ExpireAt.UTC().Format(time.RFC3339))
+		if trans != nil {
+			trans.TransactionData.Context.SetLabel("cached", true)
+		}
 		c.JSON(cacheData.Status, cacheData.Data)
 	}
 }
