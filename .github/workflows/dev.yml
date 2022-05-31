@@ -2,7 +2,7 @@ name: Build Service
 on:
   push:
     branches:
-      - apm
+      - dev
 
 jobs:
   build:
