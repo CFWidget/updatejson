@@ -42,8 +42,10 @@ func GetFromCache(key string) (CachedResponse, bool) {
 	return res, true
 }
 
-func SetInCache(key string, status int, data interface{}) {
-	memcache.Store(key, CachedResponse{Data: data, Status: status, ExpireAt: time.Now().Add(cacheTtl)})
+func SetInCache(key string, status int, data interface{}) time.Time {
+	cache := CachedResponse{Data: data, Status: status, ExpireAt: time.Now().Add(cacheTtl)}
+	memcache.Store(key, cache)
+	return cache.ExpireAt
 }
 
 func RemoveFromCache(key string) {

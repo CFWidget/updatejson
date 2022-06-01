@@ -31,6 +31,16 @@ var invalidVersions = []string{"Forge", "Fabric", "Quilt", "Rift"}
 func main() {
 	var err error
 
+	db, err := Database(context.Background())
+	if err != nil {
+		panic(err)
+	}
+
+	err = db.AutoMigrate(&Version{})
+	if err != nil {
+		panic(err)
+	}
+
 	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
 	//but because it's hard to do proper version checks, we will just read the files
 	_ = apm.DefaultTracer()
@@ -38,9 +48,9 @@ func main() {
 	r := gin.Default()
 	r.Use(apmgin.Middleware(r))
 
-	r.GET("/:projectId/:modId", processRequest)
-	r.GET("/:projectId/:modId/references", getReferences)
-	r.GET("/:projectId/:modId/expire", expireCache)
+	r.GET("/:projectId/:modId", setTransaction, readFromCache, processRequest)
+	r.GET("/:projectId/:modId/references", setTransaction, readFromCache, getReferences)
+	r.GET("/:projectId/:modId/expire", setTransaction, expireCache)
 
 	r.StaticFile("/", "home.html")
 	r.StaticFile("/app.css", "app.css")
@@ -63,13 +73,6 @@ func processRequest(c *gin.Context) {
 
 	loader = strings.ToLower(loader)
 
-	trans := apm.TransactionFromContext(c.Request.Context())
-	if trans != nil {
-		trans.TransactionData.Context.SetLabel("projectId", pid)
-		trans.TransactionData.Context.SetLabel("modId", strings.ToLower(modId))
-		trans.TransactionData.Context.SetLabel("loader", strings.ToLower(loader))
-	}
-
 	var projectId int
 	var err error
 	if projectId, err = strconv.Atoi(pid); err != nil {
@@ -77,40 +80,27 @@ func processRequest(c *gin.Context) {
 		return
 	}
 
-	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
-	if !exists {
-		if trans != nil {
-			trans.TransactionData.Context.SetLabel("cached", false)
-		}
+	data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
 
-		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
+	if err == ErrInvalidProjectId || err == ErrUnsupportedGame {
+		d := map[string]string{"error": err.Error()}
+		SetInCache(c.Request.URL.RequestURI(), http.StatusOK, d)
+		c.JSON(http.StatusBadRequest, d)
+	} else if err != nil {
+		log.Printf("Error: %s", err.Error())
+		//do not cache this, we don't want it preserved
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 
-		data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
-
-		if err == ErrInvalidProjectId || err == ErrUnsupportedGame {
-			d := map[string]string{"error": err.Error()}
-			SetInCache(c.Request.URL.RequestURI(), http.StatusOK, d)
-			c.JSON(http.StatusBadRequest, d)
-		} else if err != nil {
-			log.Printf("Error: %s", err.Error())
-			//do not cache this, we don't want it preserved
-			c.Status(http.StatusInternalServerError)
-			return
-		}
-
-		if data != nil {
-			SetInCache(c.Request.URL.RequestURI(), http.StatusOK, *data)
-			c.JSON(http.StatusOK, data)
-		} else {
-			SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
-			c.Status(http.StatusNotFound)
-		}
+	if data != nil {
+		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusOK, *data)
+		cacheHeaders(c, cacheExpireTime)
+		c.JSON(http.StatusOK, data)
 	} else {
-		c.Header("MemCache-Expires-At", cacheData.ExpireAt.UTC().Format(time.RFC3339))
-		if trans != nil {
-			trans.TransactionData.Context.SetLabel("cached", true)
-		}
-		c.JSON(cacheData.Status, cacheData.Data)
+		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
+		cacheHeaders(c, cacheExpireTime)
+		c.Status(http.StatusNotFound)
 	}
 }
 
@@ -134,89 +124,68 @@ func getReferences(c *gin.Context) {
 
 	loader = strings.ToLower(loader)
 
-	trans := apm.TransactionFromContext(c.Request.Context())
-	if trans != nil {
-		trans.TransactionData.Context.SetLabel("projectId", pid)
-		trans.TransactionData.Context.SetLabel("modId", strings.ToLower(modId))
-		trans.TransactionData.Context.SetLabel("loader", strings.ToLower(loader))
+	var projectId int
+	var err error
+	if projectId, err = strconv.Atoi(pid); err != nil {
+		SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
+		c.Status(http.StatusNotFound)
+		return
 	}
 
-	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
-	if !exists {
-		c.Header("MemCache-Expires-At", time.Now().UTC().Format(time.RFC3339))
+	db, err := Database(c.Request.Context())
+	if err != nil {
+		log.Printf("Error: %s", err.Error())
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 
-		if trans != nil {
-			trans.TransactionData.Context.SetLabel("cached", false)
+	files := make([]Version, 0)
+	err = db.Model(&Version{}).Where("curse_id = ? AND mod_id = ?", projectId, modId).Find(&files).Error
+	if err != nil {
+		log.Printf("Error: %s", err.Error())
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+
+	results := make(map[string]Version)
+	for _, file := range files {
+		versions := strings.Split(file.GameVersions, ",")
+		if !contains(loader, versions) {
+			continue
 		}
 
-		var projectId int
-		var err error
-		if projectId, err = strconv.Atoi(pid); err != nil {
-			SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
-			c.Status(http.StatusNotFound)
-			return
-		}
-
-		db, err := Database(c.Request.Context())
-		if err != nil {
-			log.Printf("Error: %s", err.Error())
-			c.Status(http.StatusInternalServerError)
-			return
-		}
-
-		files := make([]Version, 0)
-		err = db.Model(&Version{}).Where("curse_id = ? AND mod_id = ?", projectId, modId).Find(&files).Error
-		if err != nil {
-			log.Printf("Error: %s", err.Error())
-			c.Status(http.StatusInternalServerError)
-			return
-		}
-
-		results := make(map[string]Version)
-		for _, file := range files {
-			versions := strings.Split(file.GameVersions, ",")
-			if !contains(loader, versions) {
+		for _, version := range versions {
+			if contains(version, invalidVersions) {
 				continue
 			}
+			key := version + "-latest"
+			existing, exists := results[key]
+			if !exists {
+				results[key] = file
+			} else if file.ReleaseDate.After(existing.ReleaseDate) {
+				results[key] = file
+			}
 
-			for _, version := range versions {
-				if contains(version, invalidVersions) {
-					continue
-				}
-				key := version + "-latest"
-				existing, exists := results[key]
+			if file.Type == 1 {
+				key = version + "-recommended"
+				existing, exists = results[key]
 				if !exists {
 					results[key] = file
 				} else if file.ReleaseDate.After(existing.ReleaseDate) {
 					results[key] = file
 				}
-
-				if file.Type == "1" {
-					key = version + "-recommended"
-					existing, exists = results[key]
-					if !exists {
-						results[key] = file
-					} else if file.ReleaseDate.After(existing.ReleaseDate) {
-						results[key] = file
-					}
-				}
 			}
 		}
-
-		references := References{}
-		for k, v := range results {
-			references[k] = v.Url
-		}
-
-		SetInCache(c.Request.URL.RequestURI(), http.StatusOK, references)
-		c.JSON(http.StatusOK, references)
-	} else {
-		c.Header("MemCache-Expires-At", cacheData.ExpireAt.UTC().Format(time.RFC3339))
-		if trans != nil {
-			trans.TransactionData.Context.SetLabel("cached", true)
-		}
-		c.JSON(cacheData.Status, cacheData.Data)
 	}
+
+	references := References{}
+	for k, v := range results {
+		references[k] = v.Url
+	}
+
+	cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusOK, references)
+	cacheHeaders(c, cacheExpireTime)
+	c.JSON(http.StatusOK, references)
 }
 
 func getUpdateJson(projectId int, modId string, loader string, ctx context.Context) (*UpdateJson, error) {
@@ -591,4 +560,46 @@ func contains(needle string, haystack []string) bool {
 	}
 
 	return false
+}
+
+func cacheHeaders(c *gin.Context, cacheExpireTime time.Time) {
+	maxAge := cacheTtl.Seconds()
+	age := cacheTtl.Seconds() - cacheExpireTime.Sub(time.Now()).Seconds()
+
+	c.Header("Cache-Control", fmt.Sprintf("max-age=%.0f, public", maxAge))
+	c.Header("Age", fmt.Sprintf("%.0f", age))
+	c.Header("MemCache-Expires-At", cacheExpireTime.UTC().Format(time.RFC3339))
+}
+
+func readFromCache(c *gin.Context) {
+	trans := apm.TransactionFromContext(c.Request.Context())
+
+	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
+	if exists {
+		cacheHeaders(c, cacheData.ExpireAt)
+
+		if trans != nil {
+			trans.TransactionData.Context.SetLabel("cached", true)
+		}
+
+		c.JSON(cacheData.Status, cacheData.Data)
+		c.Abort()
+	} else {
+		if trans != nil {
+			trans.TransactionData.Context.SetLabel("cached", false)
+		}
+	}
+}
+
+func setTransaction(c *gin.Context) {
+	trans := apm.TransactionFromContext(c.Request.Context())
+	if trans != nil {
+		for k, v := range c.Request.URL.Query() {
+			trans.TransactionData.Context.SetLabel(k, strings.ToLower(strings.Join(v, ",")))
+		}
+
+		for _, v := range c.Params {
+			trans.TransactionData.Context.SetLabel(v.Key, v.Value)
+		}
+	}
 }
