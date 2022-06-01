@@ -421,7 +421,7 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 		}
 
 		version.ReleaseDate = curseFile.FileDate
-		version.Type = strconv.Itoa(curseFile.ReleaseType)
+		version.Type = curseFile.ReleaseType
 
 		if len(modInfo.Mods) > 0 {
 			var matchingVersion *Version
@@ -461,6 +461,11 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 	currentVersions := strings.Split(version.GameVersions, ",")
 	if !areEqual(currentVersions, curseFile.GameVersions) {
 		version.GameVersions = strings.Join(curseFile.GameVersions, ",")
+		err = db.Save(version).Error
+	}
+
+	if version.Type != curseFile.ReleaseType {
+		version.Type = curseFile.ReleaseType
 		err = db.Save(version).Error
 	}
 

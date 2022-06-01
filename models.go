@@ -9,7 +9,7 @@ type Version struct {
 	GameVersions string `gorm:"index"`
 	ModId        string
 	Version      string
-	Type         string
+	Type         int8 `gorm:"type:tinyint"`
 	ReleaseDate  time.Time
 	Url          string `gorm:"type:varchar(500)"`
 }

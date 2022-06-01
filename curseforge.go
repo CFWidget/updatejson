@@ -75,7 +75,7 @@ type File struct {
 	Id           int
 	FileDate     time.Time
 	DownloadUrl  string
-	ReleaseType  int
+	ReleaseType  int8
 	FileStatus   int
 	IsAvailable  bool
 	GameVersions []string
