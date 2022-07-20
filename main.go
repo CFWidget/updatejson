@@ -604,7 +604,7 @@ func setTransaction(c *gin.Context) {
 
 		userAgent := c.Request.UserAgent()
 		if strings.HasPrefix(userAgent, "Java-http-client/") {
-			parts := strings.Split(userAgent, "")
+			parts := strings.Split(userAgent, " ")
 			for _, v := range parts {
 				data := strings.Split(v, "/")
 				if len(data) != 2 {
