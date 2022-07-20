@@ -601,5 +601,17 @@ func setTransaction(c *gin.Context) {
 		for _, v := range c.Params {
 			trans.TransactionData.Context.SetLabel(v.Key, v.Value)
 		}
+
+		userAgent := c.Request.UserAgent()
+		if strings.HasPrefix(userAgent, "Java-http-client/") {
+			parts := strings.Split(userAgent, "")
+			for _, v := range parts {
+				data := strings.Split(v, "/")
+				if len(data) != 2 {
+					continue
+				}
+				trans.TransactionData.Context.SetLabel(data[0], data[1])
+			}
+		}
 	}
 }
