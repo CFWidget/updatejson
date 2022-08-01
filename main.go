@@ -68,7 +68,10 @@ func processRequest(c *gin.Context) {
 	modId := c.Param("modId")
 	loader := c.Query("ml")
 	if loader == "" {
-		loader = "forge"
+		loader = c.Query("loader")
+		if loader == "" {
+			loader = "forge"
+		}
 	}
 
 	loader = strings.ToLower(loader)
@@ -595,23 +598,21 @@ func setTransaction(c *gin.Context) {
 	trans := apm.TransactionFromContext(c.Request.Context())
 	if trans != nil {
 		for k, v := range c.Request.URL.Query() {
-			trans.TransactionData.Context.SetLabel(k, strings.ToLower(strings.Join(v, ",")))
+			trans.TransactionData.Context.SetLabel("query."+k, strings.ToLower(strings.Join(v, ",")))
 		}
 
 		for _, v := range c.Params {
-			trans.TransactionData.Context.SetLabel(v.Key, v.Value)
+			trans.TransactionData.Context.SetLabel("params."+v.Key, v.Value)
 		}
 
 		userAgent := c.Request.UserAgent()
-		if strings.HasPrefix(userAgent, "Java-http-client/") {
-			parts := strings.Split(userAgent, " ")
-			for _, v := range parts {
-				data := strings.Split(v, "/")
-				if len(data) != 2 {
-					continue
-				}
-				trans.TransactionData.Context.SetLabel(data[0], data[1])
+		parts := strings.Split(userAgent, " ")
+		for _, v := range parts {
+			data := strings.Split(v, "/")
+			if len(data) != 2 {
+				continue
 			}
+			trans.TransactionData.Context.SetLabel("useragent."+data[0], data[1])
 		}
 	}
 }
