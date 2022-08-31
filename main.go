@@ -383,12 +383,29 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 			return version, err
 		}
 
-		var modInfo ModInfo
+		var manifestVersion string
+		manifestVersion, err = getManifestVersion(r)
+		if err != nil {
+			//ignore errors for now
+		}
 
+		var modInfo ModInfo
 		for _, file := range r.File {
 			info, exists := checkZipFile(file, ctx)
 			if exists {
 				modInfo = info
+			}
+		}
+
+		//update info if manifest has a version
+		if manifestVersion != "" {
+			for k, v := range modInfo.Mods {
+				if v.Version == "${file.jarVersion}" {
+					modInfo.Mods[k] = Mod{
+						ModId:   v.ModId,
+						Version: manifestVersion,
+					}
+				}
 			}
 		}
 
@@ -447,14 +464,7 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 func checkZipFile(file *zip.File, ctx context.Context) (ModInfo, bool) {
 	var modInfo ModInfo
 	if file.Name == "META-INF/mods.toml" {
-		fileReader, err := file.Open()
-		if err != nil {
-			log.Printf("Error reading %s: %s", file.Name, err.Error())
-			return modInfo, false
-		}
-		defer fileReader.Close()
-
-		data, err := io.ReadAll(fileReader)
+		data, err := readZipEntry(file)
 		if err != nil {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return modInfo, false
@@ -465,18 +475,12 @@ func checkZipFile(file *zip.File, ctx context.Context) (ModInfo, bool) {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return modInfo, false
 		}
+
 		return modInfo, true
 	}
 
 	if file.Name == "fabric.mod.json" || file.Name == "quilt.mod.json" {
-		fileReader, err := file.Open()
-		if err != nil {
-			log.Printf("Error reading %s: %s", file.Name, err.Error())
-			return modInfo, false
-		}
-		defer fileReader.Close()
-
-		data, err := io.ReadAll(fileReader)
+		data, err := readZipEntry(file)
 		if err != nil {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return modInfo, false
@@ -493,6 +497,23 @@ func checkZipFile(file *zip.File, ctx context.Context) (ModInfo, bool) {
 	}
 
 	return modInfo, false
+}
+
+func getManifestVersion(reader *zip.Reader) (string, error) {
+	for _, file := range reader.File {
+		if file.Name == "META-INF/MANIFEST.MF" {
+			//pull out Implementation-Version from the manifest, in case we need it for mods.toml
+			data, err := readZipEntry(file)
+			if err != nil {
+				return "", err
+			}
+
+			metadata := readManifest(data)
+			return metadata["Implementation-Version"], nil
+		}
+	}
+
+	return "", nil
 }
 
 func downloadFile(url string, ctx context.Context) (io.ReaderAt, int64, error) {
@@ -615,4 +636,26 @@ func setTransaction(c *gin.Context) {
 			trans.TransactionData.Context.SetLabel("useragent."+data[0], data[1])
 		}
 	}
+}
+
+func readZipEntry(file *zip.File) ([]byte, error) {
+	fileReader, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer fileReader.Close()
+
+	return io.ReadAll(fileReader)
+}
+
+func readManifest(data []byte) map[string]string {
+	parsed := make(map[string]string)
+	for _, v := range strings.Split(string(data), "\n") {
+		split := strings.SplitN(v, ":", 2)
+		if len(split) == 2 {
+			parsed[strings.TrimSpace(split[0])] = strings.TrimSpace(split[1])
+		}
+	}
+
+	return parsed
 }
