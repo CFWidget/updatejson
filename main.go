@@ -91,7 +91,9 @@ func processRequest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, d)
 	} else if err != nil {
 		log.Printf("Error: %s", err.Error())
-		//do not cache this, we don't want it preserved
+		d := map[string]string{"error": err.Error()}
+		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusInternalServerError, d)
+		cacheHeaders(c, cacheExpireTime)
 		c.Status(http.StatusInternalServerError)
 		return
 	}
