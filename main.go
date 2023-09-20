@@ -594,7 +594,12 @@ func readFromCache(c *gin.Context) {
 			trans.TransactionData.Context.SetLabel("cached", true)
 		}
 
-		c.JSON(cacheData.Status, cacheData.Data)
+		if cacheData.Data != nil {
+			c.JSON(cacheData.Status, cacheData.Data)
+		} else {
+			c.Status(cacheData.Status)
+		}
+
 		c.Abort()
 	} else {
 		if trans != nil {

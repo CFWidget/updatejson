@@ -1,8 +1,11 @@
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /updatejson
-COPY . .
 
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+COPY . .
 RUN go build -buildvcs=false -o /go/bin/updatejson github.com/cfwidget/updatejson
 
 FROM alpine

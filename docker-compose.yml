@@ -12,7 +12,7 @@ services:
       DB_DATABASE: widget
       GIN_MODE: release
       DB_MODE: release
-      CORE_KEY_FILE: "/run/secrets/core_key"
+      CORE_KEY_FILE: "/run/secrets/curse_key"
       CACHE_TTL: 1h
       HOST: "${HOST}"
       ELASTIC_APM_SERVER_URL: "http://elastic-agent:8200"
