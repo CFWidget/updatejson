@@ -1,7 +1,7 @@
 version: "3.3"
 services:
   updatejson:
-    image: ghcr.io/cfwidget/updatejson
+    image: ghcr.io/cfwidget/updatejson:${TAG}
     restart: always
     depends_on:
       - database
