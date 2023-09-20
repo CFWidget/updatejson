@@ -43,9 +43,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     environment:
-      name: Dev
-      url: https://dev.forge.curseupdate.com/
+      name: development
+      url: https://dev.curseupdate.com/
     steps:
       - name: Deploy
         run:
-          curl -X POST --insecure ${{ secrets.POST_URL }}
+          curl -X POST ${{ secrets.POST_URL }}

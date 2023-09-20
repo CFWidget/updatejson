@@ -15,6 +15,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,7 +28,7 @@ const PageSize = 50
 var ErrUnsupportedGame = errors.New("unsupported game")
 var ErrInvalidProjectId = errors.New("invalid project id")
 
-var invalidVersions = []string{"Forge", "Fabric", "Quilt", "Rift"}
+var invalidGameVersionRegex = regexp.MustCompile("[^0-9.]")
 
 func main() {
 	var err error
@@ -66,15 +68,7 @@ func main() {
 func processRequest(c *gin.Context) {
 	pid := c.Param("projectId")
 	modId := c.Param("modId")
-	loader := c.Query("ml")
-	if loader == "" {
-		loader = c.Query("loader")
-		if loader == "" {
-			loader = "forge"
-		}
-	}
-
-	loader = strings.ToLower(loader)
+	loader := getLoader(c)
 
 	var projectId int
 	var err error
@@ -85,7 +79,7 @@ func processRequest(c *gin.Context) {
 
 	data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
 
-	if err == ErrInvalidProjectId || err == ErrUnsupportedGame {
+	if errors.Is(err, ErrInvalidProjectId) || errors.Is(err, ErrUnsupportedGame) {
 		d := map[string]string{"error": err.Error()}
 		SetInCache(c.Request.URL.RequestURI(), http.StatusOK, d)
 		c.JSON(http.StatusBadRequest, d)
@@ -95,10 +89,7 @@ func processRequest(c *gin.Context) {
 		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusInternalServerError, d)
 		cacheHeaders(c, cacheExpireTime)
 		c.Status(http.StatusInternalServerError)
-		return
-	}
-
-	if data != nil {
+	} else if data != nil {
 		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusOK, *data)
 		cacheHeaders(c, cacheExpireTime)
 		c.JSON(http.StatusOK, data)
@@ -122,12 +113,7 @@ func expireCache(c *gin.Context) {
 func getReferences(c *gin.Context) {
 	pid := c.Param("projectId")
 	modId := c.Param("modId")
-	loader := c.Query("ml")
-	if loader == "" {
-		loader = "forge"
-	}
-
-	loader = strings.ToLower(loader)
+	loader := getLoader(c)
 
 	var projectId int
 	var err error
@@ -160,7 +146,7 @@ func getReferences(c *gin.Context) {
 		}
 
 		for _, version := range versions {
-			if contains(version, invalidVersions) {
+			if invalidGameVersionRegex.MatchString(version) {
 				continue
 			}
 			key := version + "-latest"
@@ -221,7 +207,7 @@ func getUpdateJson(projectId int, modId string, loader string, ctx context.Conte
 	for _, file := range filteredFiles {
 		//because each file can be associated to multiple versions, check each one
 		for _, version := range file.GameVersions {
-			if contains(version, invalidVersions) {
+			if invalidGameVersionRegex.MatchString(version) {
 				continue
 			}
 			key := version + "-latest"
@@ -370,11 +356,11 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 	}
 
 	err = db.Where(version).Find(&version).Error
-	if err != nil && err != gorm.ErrRecordNotFound {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return version, err
 	}
 
-	if err == gorm.ErrRecordNotFound || version.Id == 0 {
+	if errors.Is(err, gorm.ErrRecordNotFound) || version.Id == 0 {
 		reader, size, err := downloadFile(curseFile.DownloadUrl, ctx)
 		if err != nil {
 			return version, err
@@ -660,4 +646,26 @@ func readManifest(data []byte) map[string]string {
 	}
 
 	return parsed
+}
+
+func getLoader(c *gin.Context) string {
+	loader := c.Query("ml")
+	if loader != "" {
+		return strings.ToLower(loader)
+	}
+	loader = c.Query("loader")
+	if loader != "" {
+		return strings.ToLower(loader)
+	}
+
+	rootHost := os.Getenv("HOST")
+	if rootHost != "" {
+		rootHost = "." + rootHost
+		host := c.Request.URL.Host
+		if strings.HasSuffix(host, rootHost) {
+			return strings.ToLower(strings.TrimSuffix(host, rootHost))
+		}
+	}
+
+	return "forge"
 }

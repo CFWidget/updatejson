@@ -14,20 +14,32 @@ services:
       DB_MODE: release
       CORE_KEY_FILE: "/run/secrets/core_key"
       CACHE_TTL: 1h
+      HOST: "${HOST}"
+      ELASTIC_APM_SERVER_URL: "http://elastic-agent:8200"
+      ELASTIC_APM_SERVICE_NAME: "curseupdate"
+      ELASTIC_APM_ENVIRONMENT: "development"
+      ELASTIC_APM_VERIFY_SERVER_CERT: "false"
     secrets:
-      - core_key
+      - curse_key
       - updatejson_db_pw
     networks:
       - default
       - ingress_default
+      - elastic
     deploy:
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.${SERVICE_NAME}.rule=Host(`${HOST}`)"
+        - "traefik.http.routers.${SERVICE_NAME}.rule=HostRegexp(`${HOST}`,`{subdomain:[a-z0-9]+}.${HOST}`)"
         - "traefik.http.routers.${SERVICE_NAME}.entrypoints=websecure"
         - "traefik.http.routers.${SERVICE_NAME}.tls.certresolver=myresolver"
         - "traefik.http.services.${SERVICE_NAME}.loadbalancer.server.port=8080"
-
+        - "traefik.http.routers.${SERVICE_NAME}.tls.domains[0].main=${HOST}"
+        - "traefik.http.routers.${SERVICE_NAME}.tls.domains[0].sans=*.${HOST}"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100M"
+        max-file: "5"
   database:
     image: mariadb
     restart: always
@@ -40,11 +52,20 @@ services:
       - updatejson_db_pw
     volumes:
       - "dbdata:/var/lib/mysql"
+    deploy:
+      placement:
+        constraints:
+          - "node.role==manager"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100M"
+        max-file: "5"
 
 secrets:
-  core_key:
-    external: true
   updatejson_db_pw:
+    external: true
+  curse_key:
     external: true
 
 volumes:
@@ -52,4 +73,6 @@ volumes:
 
 networks:
   ingress_default:
+    external: true
+  elastic:
     external: true

@@ -49,8 +49,8 @@ jobs:
     needs: build
     environment:
       name: production
-      url: https://forge.curseupdate.com/
+      url: https://curseupdate.com/
     steps:
       - name: Deploy
         run:
-          curl -X POST --insecure ${{ secrets.POST_URL }}
+          curl -X POST ${{ secrets.POST_URL }}
