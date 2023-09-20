@@ -1,64 +1,109 @@
 <!doctype html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <link rel="stylesheet" href="app.css">
-    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-    <link href="https://fonts.googleapis.com/css?family=Montserrat:700,900|Work+Sans|Roboto+Mono" rel="stylesheet">
-    <title>CurseForge Widget &amp; API </title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="app.css">
+  <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+  <link href="https://fonts.googleapis.com/css?family=Montserrat:700,900|Work+Sans|Roboto+Mono" rel="stylesheet">
+  <title>CurseForge Widget &amp; API </title>
 </head>
 <body class=" w-100 bg-nearest-white work-sans lh-copy black-80 ">
 <div class="vh-50 dt center">
-    <div class="mw7 dtc v-mid ph4">
-        <div class="measure-wide">
-            <h1 class="ttu b montserrat fw9 lh-title">
-                Forge Mod Update links for <span class="curse-orange">CurseForge</span> Projects.
-            </h1>
-            <p>
-                Enable the built-in <a href="https://mcforge.readthedocs.io/en/latest/gettingstarted/autoupdate/">Forge
-                Update system</a> with your mod with no code changes
-                or hosting of websites. By using the power of CurseForge, let us manage the
-                JSON so you can focus on creating your mods!
-            </p>
-            <p class="black-70">
-                <a class="dib link gray ml1" href="#documentation:about">
-                    View Documentation &dtrif;
-                </a></span>
-            </p>
-        </div>
+  <div class="mw7 dtc v-mid ph4">
+    <div class="measure-wide">
+      <h1 class="ttu b montserrat fw9 lh-title">
+        Forge Mod Update links for <span class="curse-orange">CurseForge</span> Projects.
+      </h1>
+      <p>
+        Enable the built-in <a href="https://mcforge.readthedocs.io/en/latest/gettingstarted/autoupdate/">Forge
+        Update system</a> with your mod with no code changes or hosting of websites. By using the power of CurseForge,
+        let us manage the JSON so you can focus on creating your mods!
+      </p>
+      <p class="black-70">
+        <a class="dib link gray ml1" href="#documentation:about">
+          View Documentation &dtrif;
+        </a></span>
+      </p>
     </div>
+  </div>
 </div>
 <div class="measure-wide center pv3 mb5 ph4 ph0-l" id="documentation">
-    <h2 id="documentation:about">API</h2>
-    <p>
-        The CurseForge UpdateJson API is available at
-        <code class="roboto-mono bg-light-gray f6 ph2 pv1 br2">https://forge.curseupdate.com</code>. Project update
-        jsons can be retrieved by making a GET request to this endpoint where the URL contains 2 pieces of information.
-    </p>
+  <h2 id="documentation:about">What does this do?</h2>
 
-    <p>
-        <code class="roboto-mono f6" style="word-break: break-all;">
-            <span class="b">GET</span> https://forge.curseupdate.com/{projectId}/{modid}
-        </code>
-    </p>
+  <p>
+    We query CurseForge and retrieve all versions of your mod. We parse each of your files and pull the versions from
+    your mods.toml. Using this, we construct the appropriate JSON structure needed for Forge's update checker. This
+    means we provide the most accurate versions of your mod for Forge to look at. We do not rely on specific file names
+    or structures, and can support all the mod ids in your mods.
+  </p>
 
-    <p>
-        Project IDs can be found by going to your project on CurseForge and looking for the "Project ID" on the right.
-        The mod id is your modid from the mods.toml file.
-    </p>
+  <p>
+    We also offer this JSON structure for non-Forge files as well. While Fabric and other mod loaders may not offer the
+    same system, we have chosen to provide this structure to those mods, so they can implement their own version
+    checker. For Fabric-based mods, we read the fabric.mod.json or quilt.mod.json file to pull the needed data. For
+    older versions of Forge, we use the mcmod.info file.
+  </p>
 
-    <p>We query CurseForge and retrieve all versions of your mod. We parse each of your files and pull the versions
-        from your mods.toml. Using this, we construct the appropriate JSON structure needed for Forge's update
-        checker. This means we provide the most accurate versions of your mod for Forge to look at. We do not rely
-        on specific file names or structures, and can support all the mod ids in your mods.</p>
+  <p>
+    For this service to work, a mod must allow third-party downloads. This is required in order for us to download the
+    JAR files for processing. Disabling third-party downloads will prevent us accessing the required files in the JAR to
+    generate a proper response.
+  </p>
 
-    <p>
-        <span>Example: </span>
-        <code class="roboto-mono f6" style="word-break: break-all;">
-            <span class="b">GET</span> https://forge.curseupdate.com/32274/journeymap
-        </code>
-    <pre class="f6">{
+  <h2 id="documentation:api">API</h2>
+  <p>
+    The CurseForge UpdateJson API is available at
+    <code class="roboto-mono bg-light-gray f6 ph2 pv1 br2">https://curseupdate.com</code>
+  </p>
+  <p>
+    Project update jsons can be retrieved by making a GET request to this endpoint where the URL contains several pieces
+    of information.
+  </p>
+
+  <p>
+    <code class="roboto-mono f6" style="word-break: break-all;">
+      <span class="b">GET</span> https://curseupdate.com/{projectId}/{modid}?ml={loader}
+    </code>
+  </p>
+
+  <p>
+    Project IDs can be found by going to your project on CurseForge and looking for the "Project ID" on the right.
+    The mod id is your modid from the mods.toml file.
+  </p>
+
+  <p>
+    The loader is the slug name of a mod loader supported by CurseForge. Commonly, this will be forge, fabric, or
+    neoforge.
+  </p>
+
+  <p>
+    Alternatively, the hostname can be used to pass the loader. This would follow the following structure:
+  </p>
+
+  <p>
+    <code class="roboto-mono f6" style="word-break: break-all;">
+      <span class="b">GET</span> https://{loader}.curseupdate.com/{projectId}/{modid}
+    </code>
+  </p>
+
+  <p>
+    <span>Example: </span>
+    <code class="roboto-mono f6" style="word-break: break-all;">
+      <span class="b">GET</span> https://forge.curseupdate.com/32274/journeymap
+    </code>
+    <code class="roboto-mono f6" style="word-break: break-all;">
+      <span class="b">GET</span> https://curseupdate.com/32274/journeymap?ml=forge
+    </code>
+  </p>
+
+  <p>
+    <span>Example: </span>
+    <code class="roboto-mono f6" style="word-break: break-all;">
+      <span class="b">GET</span> https://curseupdate.com/32274/journeymap?ml=forge
+    </code>
+  </p>
+  <pre class="f6">{
     "promos": {
         "1.14.4-latest": "5.7.0",
         "1.14.4-recommended": "5.7.0",
@@ -79,12 +124,12 @@
     "homepage": "https://www.curseforge.com/minecraft/mc-mods/journeymap"
 }
       </pre>
-    </p>
-    <p>
-        <code class="roboto-mono f6" style="word-break: break-all;">
-            <span class="b">GET</span> https://forge.curseupdate.com/32274/journeymap/references
-        </code>
-    <pre class="f6">{
+  <p>
+    <code class="roboto-mono f6" style="word-break: break-all;">
+      <span class="b">GET</span> https://curseupdate.com/32274/journeymap/references?ml=forge
+    </code>
+  </p>
+  <pre class="f6">{
   "1.14.4-latest": "https://www.curseforge.com/minecraft/mc-mods/journeymap/files/3208023",
   "1.14.4-recommended": "https://www.curseforge.com/minecraft/mc-mods/journeymap/files/3208023",
   "1.15.2-latest": "https://www.curseforge.com/minecraft/mc-mods/journeymap/files/3208019",
@@ -102,72 +147,88 @@
   "1.18.1-latest": "https://www.curseforge.com/minecraft/mc-mods/journeymap/files/3640441"
 }
       </pre>
-    </p>
-    <p>
-        For non-Forge mods, there is no defined structure offered by other teams. As such, we return the same
-        JSON structure. To get data for those other mods, you can pass the modloader name to the URL in the <code>ml</code>
-        query param.
-        Supported loaders:
-        <ul class="list pa0">
-            <li>- Fabric</li>
-            <li>- Quilt</li>
-        </ul>
-    </p>
-    <p>
-        <span>Example: </span>
-        <code class="roboto-mono f6" style="word-break: break-all;">
-            <span class="b">GET</span> https://forge.curseupdate.com/32274/journeymap?ml=fabric
-        </code>
-    </p>
-    <h2 id="documentation:responses">Responses</h2>
-    <p>
-        Each request response is a JSON document containing either project version data or an error.
-    </p>
-    <ul class="list pa0">
-        <li><span class="robot-mono b curse-orange">200</span> Project found and JSON is attached</li>
-        <li><span class="robot-mono b curse-orange">202</span> Cache has been purged</li>
-        <li><span class="robot-mono b curse-orange">400</span> Path provided is not a valid CurseForge ID</li>
-        <li><span class="robot-mono b curse-orange">404</span> Path is valid but
-            CurseForge responded that no project exists. This may be because no
-            project has ever lived at this path, or a project does but is hidden
-            from public view.
-        </li>
-        <li><span class="robot-mono b curse-orange">500</span> An unknown error
-            occurred processing your request.
-        </li>
-    </ul>
-    <h2 id="documentation:data">Project Data</h2>
-    <p>
-        Data is pulled from CurseForge directly, with mod versions cached locally to avoid heavy pulls from CurseForge.
-        This does mean that if we have not seen a project before, the first call will be slow, as we have to pull files
-        from CurseForge to populate this cache, but future updates and calls will be served quickly.</p>
 
-    <p>
-        Each time a new file is released on CurseForge and a call is made to this service, we pull the new file and
-        analyze it to update the json. </p>
+  <p>
+    For non-Forge mods, there is no defined structure offered by other teams. As such, we return the same
+    JSON structure. To get data for those other mods, you can pass the modloader slug (in parenthesis next to each
+    name in the below list) to the URL in the <code>ml</code> query param. This list includes (but not limited to):
+  </p>
+  <ul class="list pa0">
+    <li>- Forge (forge)</li>
+    <li>- Fabric (fabric)</li>
+    <li>- Quilt (quilt)</li>
+    <li>- Rift (rift)</li>
+    <li>- NeoForge (neoforge)</li>
+  </ul>
 
-    <p>
-    <h2 id="documentation:cache">Cache</h2>
-    <p>
-        All URL calls are cached for 5 minutes on the backend server, so that repeated calls to the same URL do not
-        overload CurseForge with requests, and can be quickly served to end users. In the event this cache needs to be
-        purged for a specific URL, /expire can be added to the URL to force it to be expired. Do note this is only meant
-        for updating the JSON immediately after a release. Abuse of this feature will result in it being removed.
-    </p>
-    <h2 id="documentation:contact">Contact</h2>
-    <p>
-        We now have a Discord! - <a href="https://discord.gg/FENdtjAJRF">https://discord.gg/FENdtjAJRF</a></p>
-    <p>You can also reach out via <a class="link curse-orange"
-                                     href="http://www.minecraftforum.net/private-messages/send?recipient=Lord_Ralex">
-        Private Message on minecraftforum.net</a> or email — admin@cfwidget.com</a>
-    </p>
-    <h2 id="privacy">Privacy</h2>
-    <p>
-        All traffic is routed through Cloudflare, which follows the <a class="link curse-orange"
-                                                                       href="https://www.cloudflare.com/privacypolicy/">
-        Cloudflare Privacy Policy.</a>
-        No identifiable information is logged or stored on the backend servers.
-    </p>
+  <p>
+    <span>Example: </span>
+    <code class="roboto-mono f6" style="word-break: break-all;">
+      <span class="b">GET</span> https://curseupdate.com/32274/journeymap?ml=fabric
+    </code>
+  </p>
+
+  <h2 id="documentation:responses">Responses</h2>
+  <p>
+    Each request response is a JSON document containing either project version data or an error.
+  </p>
+  <ul class="list pa0">
+    <li><span class="robot-mono b curse-orange">200</span> Project found and JSON is attached</li>
+    <li><span class="robot-mono b curse-orange">202</span> Cache has been purged</li>
+    <li><span class="robot-mono b curse-orange">400</span> Path provided is not a valid CurseForge ID</li>
+    <li><span class="robot-mono b curse-orange">404</span> Path is valid but CurseForge responded that no project
+      exists. This may be because no project has ever lived at this path, or a project does but is hidden from public
+      view.
+    </li>
+    <li><span class="robot-mono b curse-orange">500</span> An unknown error occurred processing your request.</li>
+  </ul>
+
+  <h2 id="documentation:data">Project Data</h2>
+  <p>
+    Data is pulled from CurseForge directly, with mod versions cached locally to avoid heavy pulls from CurseForge.
+    This does mean that if we have not seen a project before, the first call will be slow, as we have to pull files
+    from CurseForge to populate this cache, but future updates and calls will be served quickly.</p>
+
+  <p>
+    Each time a new file is released on CurseForge and a call is made to this service, we pull the new file and
+    analyze it to update the json.
+  </p>
+
+  <h2 id="documentation:cache">Cache</h2>
+  <p>
+    All URL calls are cached for a short period of time on the backend server, so that repeated calls to the same URL do
+    not overload CurseForge with requests, and can be quickly served to end users. In the event this cache needs to be
+    purged for a specific URL, /expire can be added to the URL to force it to be expired. Do note this is only meant
+    for updating the JSON immediately after a release. Abuse of this feature will result in it being removed.
+  </p>
+
+  <h2 id="documentation:contact">Contact</h2>
+  <p>
+    We now have a Discord! - <a href="https://discord.gg/FENdtjAJRF">https://discord.gg/FENdtjAJRF</a>
+  </p>
+  <p>
+    You can also reach out via <a class="link curse-orange"
+                                  href="http://www.minecraftforum.net/private-messages/send?recipient=Lord_Ralex">
+    Private Message on minecraftforum.net</a> or email — admin@cfwidget.com
+  </p>
+
+  <h2 id="privacy">Privacy</h2>
+  <p>
+    Traffic may routed through Cloudflare, which follows the <a class="link curse-orange"
+                                                                href="https://www.cloudflare.com/privacypolicy/">
+    Cloudflare Privacy Policy.</a>
+  </p>
+  <p>
+    The following data is stored on the backend for analytical and security purposes:
+  </p>
+  <ul class="list pa0">
+    <li>- IP</li>
+    <li>- URL</li>
+    <li>- User Agent</li>
+  </ul>
+  <p>
+    Data is not linked to a specific user or account, nor can the data collected be used to do so.
+  </p>
 </div>
 <script src="app.js"></script>
 </body>

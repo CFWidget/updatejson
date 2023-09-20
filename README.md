@@ -5,8 +5,7 @@ CurseForge, let us manage the JSON so you can focus on creating your mods!
 
 ## API
 
-The CurseForge UpdateJson API is available at https://curseupdate.com. Project update jsons can be retrieved by making a
-GET request to this endpoint where the URL contains 2 pieces of information.
+The CurseForge UpdateJson API is available at https://curseupdate.com. Please also refer here for the full documentation
 
 `GET https://curseupdate.com/{projectId}/{modid}?ml={loader}`
 
