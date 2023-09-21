@@ -101,10 +101,19 @@ func processRequest(c *gin.Context) {
 }
 
 func expireCache(c *gin.Context) {
-	key := strings.TrimSuffix(c.Request.RequestURI, "/expire")
+	basePath := buildUrl(c)
+	basePath = strings.TrimSuffix(basePath, "/expire")
+
+	key := basePath
+	if c.Request.URL.RawQuery != "" {
+		key = key + "?" + c.Request.URL.RawQuery
+	}
 	RemoveFromCache(key)
 
-	key = strings.TrimSuffix(c.Request.RequestURI, "/expire") + "/references"
+	key = basePath + "/references"
+	if c.Request.URL.RawQuery != "" {
+		key = key + "?" + c.Request.URL.RawQuery
+	}
 	RemoveFromCache(key)
 
 	c.Status(http.StatusAccepted)
@@ -586,7 +595,7 @@ func cacheHeaders(c *gin.Context, cacheExpireTime time.Time) {
 func readFromCache(c *gin.Context) {
 	trans := apm.TransactionFromContext(c.Request.Context())
 
-	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
+	cacheData, exists := GetFromCache(buildUrl(c))
 	if exists {
 		cacheHeaders(c, cacheData.ExpireAt)
 
@@ -673,4 +682,8 @@ func getLoader(c *gin.Context) string {
 	}
 
 	return "forge"
+}
+
+func buildUrl(c *gin.Context) string {
+	return c.Request.Host + c.Request.RequestURI
 }
