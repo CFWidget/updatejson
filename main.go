@@ -666,7 +666,7 @@ func getLoader(c *gin.Context) string {
 	rootHost := os.Getenv("HOST")
 	if rootHost != "" {
 		rootHost = "." + rootHost
-		host := c.Request.URL.Host
+		host := c.Request.Host
 		if strings.HasSuffix(host, rootHost) {
 			return strings.ToLower(strings.TrimSuffix(host, rootHost))
 		}
