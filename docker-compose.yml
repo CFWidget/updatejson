@@ -6,19 +6,19 @@ services:
     depends_on:
       - database
     environment:
-      DB_USER: updatejson
+      DB_USER: "${DB_USER}"
       DB_PASS_FILE: "/run/secrets/updatejson_db_pw"
-      DB_HOST: database
-      DB_DATABASE: widget
-      GIN_MODE: release
-      DB_MODE: release
+      DB_HOST: "${DB_HOST}"
+      DB_DATABASE: "${DB_DATABASE}"
+      GIN_MODE: "${GIN_MODE}"
+      DB_MODE: "${DB_MODE}"
       CORE_KEY_FILE: "/run/secrets/curse_key"
-      CACHE_TTL: 1h
+      CACHE_TTL: "${CACHE_TTL}"
       HOST: "${HOST}"
-      ELASTIC_APM_SERVER_URL: "http://elastic-agent:8200"
-      ELASTIC_APM_SERVICE_NAME: "curseupdate"
-      ELASTIC_APM_ENVIRONMENT: "development"
-      ELASTIC_APM_VERIFY_SERVER_CERT: "false"
+      ELASTIC_APM_SERVER_URL: "${ELASTIC_APM_SERVER_URL}"
+      ELASTIC_APM_SERVICE_NAME: "${ELASTIC_APM_SERVICE_NAME}"
+      ELASTIC_APM_ENVIRONMENT: "${ELASTIC_APM_ENVIRONMENT}"
+      ELASTIC_APM_VERIFY_SERVER_CERT: "${ELASTIC_APM_VERIFY_SERVER_CERT}"
     secrets:
       - curse_key
       - updatejson_db_pw
@@ -44,9 +44,9 @@ services:
     image: mariadb
     restart: always
     environment:
-      MYSQL_USER: updatejson
+      MYSQL_USER: "${DB_USER}"
       MYSQL_PASSWORD_FILE: "/run/secrets/updatejson_db_pw"
-      MYSQL_DATABASE: widget
+      MYSQL_DATABASE: "${DB_DATABASE}"
       MYSQL_RANDOM_ROOT_PASSWORD: "true"
     secrets:
       - updatejson_db_pw
