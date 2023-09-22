@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"github.com/pelletier/go-toml"
+	"github.com/pelletier/go-toml/v2"
 	"go.elastic.co/apm/module/apmgin/v2"
 	"go.elastic.co/apm/v2"
 	"gorm.io/gorm"
@@ -54,9 +54,21 @@ func main() {
 	r.GET("/:projectId/:modId/references", setTransaction, readFromCache, getReferences)
 	r.GET("/:projectId/:modId/expire", setTransaction, expireCache)
 
-	r.StaticFile("/", "home.html")
-	r.StaticFile("/app.css", "app.css")
-	r.StaticFile("/app.js", "app.js")
+	fs := http.FS(webAssets)
+	r.StaticFileFS("/", "home.html", fs)
+	r.GET("/service-worker.js", func(c *gin.Context) { c.Status(http.StatusNotFound) })
+	r.GET("/service-worker-dev.js", func(c *gin.Context) { c.Status(http.StatusNotFound) })
+
+	bundledFiles, err := webAssets.ReadDir(".")
+	if err != nil {
+		panic(err)
+	}
+	for _, v := range bundledFiles {
+		if v.IsDir() {
+			continue
+		}
+		r.StaticFileFS("/"+v.Name(), v.Name(), fs)
+	}
 
 	log.Printf("Starting web services\n")
 	err = r.Run()

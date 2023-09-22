@@ -10,9 +10,6 @@ RUN go build -buildvcs=false -o /go/bin/updatejson github.com/cfwidget/updatejso
 
 FROM alpine
 COPY --from=builder /go/bin/updatejson /go/bin/updatejson
-COPY --from=builder /updatejson/home.html /updatejson/home.html
-COPY --from=builder /updatejson/app.css /updatejson/app.css
-COPY --from=builder /updatejson/app.js /updatejson/app.js
 
 WORKDIR /updatejson
 
