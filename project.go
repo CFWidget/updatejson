@@ -5,8 +5,13 @@ type ModInfo struct {
 }
 
 type Mod struct {
-	ModId   string `json:"id"`
-	Version string `json:"version"`
+	ModId    string `json:"id"`
+	Version  string `json:"version"`
+	OldModId string `json:"modid"`
+}
+
+type McMod struct {
+	ModList []Mod
 }
 
 type UpdateJson struct {

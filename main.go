@@ -30,6 +30,8 @@ var ErrInvalidProjectId = errors.New("invalid project id")
 
 var invalidGameVersionRegex = regexp.MustCompile("[^0-9.]")
 
+var modMetadataFiles = []string{"META-INF/mods.toml", "fabric.mod.json", "quilt.mod.json", "mcmod.info"}
+
 func main() {
 	var err error
 
@@ -43,8 +45,6 @@ func main() {
 		panic(err)
 	}
 
-	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
-	//but because it's hard to do proper version checks, we will just read the files
 	_ = apm.DefaultTracer()
 
 	r := gin.Default()
@@ -217,15 +217,7 @@ func getUpdateJson(projectId int, modId string, loader string, ctx context.Conte
 		return nil, err
 	}
 
-	filteredFiles := make([]File, 0)
-
 	for _, file := range curseforgeFiles {
-		if contains(loader, file.GameVersions) {
-			filteredFiles = append(filteredFiles, file)
-		}
-	}
-
-	for _, file := range filteredFiles {
 		//because each file can be associated to multiple versions, check each one
 		for _, version := range file.GameVersions {
 			if invalidGameVersionRegex.MatchString(version) {
@@ -393,16 +385,15 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 		}
 
 		var manifestVersion string
-		manifestVersion, err = getManifestVersion(r)
-		if err != nil {
-			//ignore errors for now
-		}
+		manifestVersion, _ = getManifestVersion(r)
 
 		var modInfo ModInfo
 		for _, file := range r.File {
-			info, exists := checkZipFile(file, ctx)
-			if exists {
-				modInfo = info
+			if contains(file.Name, modMetadataFiles) {
+				info, exists := checkZipFile(file, ctx)
+				if exists {
+					modInfo = info
+				}
 			}
 		}
 
@@ -502,6 +493,43 @@ func checkZipFile(file *zip.File, ctx context.Context) (ModInfo, bool) {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return modInfo, false
 		}
+
+		return modInfo, true
+	}
+
+	if file.Name == "mcmod.info" {
+		data, err := readZipEntry(file)
+		if err != nil {
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
+			return modInfo, false
+		}
+
+		//there is 2 possible "variants" of the file that we can expect.
+		//one is the full array, another is an object of them
+		//check for the array first
+		var mods []Mod
+		err = json.Unmarshal(data, &mods)
+
+		//if there is nothing in the array, assume second format
+		if len(mods) == 0 {
+			var alt McMod
+			err = json.Unmarshal(data, &alt)
+			mods = alt.ModList
+		}
+
+		if len(mods) == 0 {
+			return modInfo, false
+		}
+
+		modInfo = ModInfo{Mods: mods}
+
+		for k, v := range modInfo.Mods {
+			modInfo.Mods[k] = Mod{
+				ModId:   v.OldModId,
+				Version: v.Version,
+			}
+		}
+
 		return modInfo, true
 	}
 

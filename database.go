@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/cfwidget/updatejson/env"
+	"github.com/go-gormigrate/gormigrate/v2"
 	mysql "go.elastic.co/apm/module/apmgormv2/v2/driver/mysql"
 	"gorm.io/gorm"
 	"log"
@@ -39,7 +40,22 @@ func Database(ctx context.Context) (*gorm.DB, error) {
 		if err != nil {
 			log.Printf("Error running DB migration: %s", err.Error())
 		}
+
+		m := gormigrate.New(_db, gormigrate.DefaultOptions, []*gormigrate.Migration{
+			{
+				ID:      "1626910428",
+				Migrate: reset,
+			},
+		})
+		err = m.Migrate()
+		if err != nil {
+			log.Printf("Error running DB migration: %s", err.Error())
+		}
 	})
 
 	return _db.WithContext(ctx), nil
+}
+
+func reset(db *gorm.DB) error {
+	return db.Exec("TRUNCATE TABLE versions").Error
 }
