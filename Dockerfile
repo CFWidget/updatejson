@@ -22,7 +22,8 @@ ENV   DB_USER="updatejson" \
       GIN_MODE="release" \
       DB_MODE="release" \
       CORE_KEY="" \
-      CACHE_TTL="1h"
+      CACHE_TTL="1h" \
+      HOST="curseupdate.com"
 
 ENTRYPOINT ["/go/bin/updatejson"]
 CMD [""]

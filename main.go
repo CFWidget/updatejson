@@ -677,6 +677,9 @@ func setTransaction(c *gin.Context) {
 			}
 			trans.TransactionData.Context.SetLabel("useragent."+data[0], data[1])
 		}
+
+		loader := getLoader(c)
+		trans.TransactionData.Context.SetLabel("loader", loader)
 	}
 }
 
