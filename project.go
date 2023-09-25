@@ -1,7 +1,8 @@
 package main
 
 type ModInfo struct {
-	Mods []Mod
+	Mods      []Mod
+	ModLoader string
 }
 
 type Mod struct {
@@ -15,8 +16,9 @@ type McMod struct {
 }
 
 type UpdateJson struct {
-	Promos   map[string]string `json:"promos"`
-	HomePage string            `json:"homepage"`
+	Promos     map[string]string `json:"promos"`
+	References References        `json:"-"`
+	HomePage   string            `json:"homepage"`
 }
 
 type References map[string]string

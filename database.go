@@ -43,7 +43,7 @@ func Database(ctx context.Context) (*gorm.DB, error) {
 
 		m := gormigrate.New(_db, gormigrate.DefaultOptions, []*gormigrate.Migration{
 			{
-				ID:      "1626910428",
+				ID:      "1695655117",
 				Migrate: reset,
 			},
 		})
