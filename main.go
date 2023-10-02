@@ -32,8 +32,6 @@ var ErrInvalidProjectId = errors.New("invalid project id")
 
 var invalidGameVersionRegex = regexp.MustCompile("[^0-9.]")
 
-var modMetadataFiles = []string{"META-INF/mods.toml", "fabric.mod.json", "quilt.mod.json", "mcmod.info"}
-
 func main() {
 	var err error
 
@@ -238,7 +236,7 @@ func getUpdateJson(projectId int, modId string, loader string, ctx context.Conte
 	results := make(map[string]*Version)
 
 	for _, v := range versionMap {
-		if v.ModId == modId && v.Version != "" && contains(loader, strings.Split(v.Loader, ",")) {
+		if v.ModId == modId && v.Version != "" && contains(strings.ToLower(loader), strings.Split(strings.ToLower(v.Loader), ",")) {
 			gameVersions := strings.Split(v.GameVersions, ",")
 			for _, version := range gameVersions {
 				if invalidGameVersionRegex.MatchString(version) {
@@ -377,14 +375,7 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 		manifestVersion, _ = getManifestVersion(r)
 
 		var modInfo *ModInfo
-		for _, file := range r.File {
-			if contains(file.Name, modMetadataFiles) {
-				info := checkZipFile(file, ctx)
-				if info != nil {
-					modInfo = info
-				}
-			}
-		}
+		parseJarFile(r, ctx)
 
 		//update info if manifest has a version
 		if modInfo != nil && manifestVersion != "" {
@@ -454,6 +445,29 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 	}
 
 	return version, err
+}
+
+func parseJarFile(file *zip.Reader, ctx context.Context) *ModInfo {
+	var result *ModInfo
+	for _, f := range file.File {
+		info := checkZipFile(f, ctx)
+		if info != nil {
+			if result == nil {
+				result = info
+			} else {
+				result.Mods = append(result.Mods, info.Mods...)
+				result.ModLoader = result.ModLoader + "," + info.ModLoader
+			}
+		}
+	}
+
+	if result != nil {
+		existingLoaders := strings.Split(result.ModLoader, ",")
+		result.ModLoader = strings.Join(dedup(existingLoaders), ",")
+		result.Mods = dedup(result.Mods)
+	}
+
+	return result
 }
 
 func checkZipFile(file *zip.File, ctx context.Context) *ModInfo {
@@ -615,17 +629,6 @@ func areEqual(arr1, arr2 []string) bool {
 	return true
 }
 
-func contains(needle string, haystack []string) bool {
-	needle = strings.ToLower(needle)
-	for _, v := range haystack {
-		if strings.ToLower(v) == needle {
-			return true
-		}
-	}
-
-	return false
-}
-
 func cacheHeaders(c *gin.Context, cacheExpireTime time.Time) {
 	maxAge := cacheTtl.Seconds()
 	age := cacheTtl.Seconds() - cacheExpireTime.Sub(time.Now()).Seconds()
@@ -732,4 +735,33 @@ func getLoader(c *gin.Context) string {
 
 func buildUrl(c *gin.Context) string {
 	return c.Request.Host + c.Request.RequestURI
+}
+
+func dedup[T comparable](source []T) []T {
+	result := make([]T, 0)
+
+	for _, v := range source {
+		exists := false
+		for _, z := range result {
+			if v == z {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			result = append(result, v)
+		}
+	}
+
+	return result
+}
+
+func contains[T comparable](needle T, haystack []T) bool {
+	for _, v := range haystack {
+		if v == needle {
+			return true
+		}
+	}
+
+	return false
 }
