@@ -375,7 +375,7 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 		manifestVersion, _ = getManifestVersion(r)
 
 		var modInfo *ModInfo
-		parseJarFile(r, ctx)
+		modInfo = parseJarFile(r, ctx)
 
 		//update info if manifest has a version
 		if modInfo != nil && manifestVersion != "" {
