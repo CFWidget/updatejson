@@ -8,13 +8,16 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"github.com/pelletier/go-toml"
+	"github.com/pelletier/go-toml/v2"
+	"github.com/spf13/cast"
 	"go.elastic.co/apm/module/apmgin/v2"
 	"go.elastic.co/apm/v2"
 	"gorm.io/gorm"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,11 +25,12 @@ import (
 )
 
 const PageSize = 50
+const OverflowedPageSize = 100
 
 var ErrUnsupportedGame = errors.New("unsupported game")
 var ErrInvalidProjectId = errors.New("invalid project id")
 
-var invalidVersions = []string{"Forge", "Fabric", "Quilt", "Rift"}
+var invalidGameVersionRegex = regexp.MustCompile("[^0-9.]")
 
 func main() {
 	var err error
@@ -41,8 +45,6 @@ func main() {
 		panic(err)
 	}
 
-	//this only works for 1.15+, because that's when the mod.toml in the META-INF was added
-	//but because it's hard to do proper version checks, we will just read the files
 	_ = apm.DefaultTracer()
 
 	r := gin.Default()
@@ -52,9 +54,50 @@ func main() {
 	r.GET("/:projectId/:modId/references", setTransaction, readFromCache, getReferences)
 	r.GET("/:projectId/:modId/expire", setTransaction, expireCache)
 
-	r.StaticFile("/", "home.html")
-	r.StaticFile("/app.css", "app.css")
-	r.StaticFile("/app.js", "app.js")
+	fs := http.FS(webAssets)
+	r.StaticFileFS("/", "home.html", fs)
+	r.GET("/service-worker.js", func(c *gin.Context) { c.Status(http.StatusNotFound) })
+	r.GET("/service-worker-dev.js", func(c *gin.Context) { c.Status(http.StatusNotFound) })
+
+	bundledFiles, err := webAssets.ReadDir(".")
+	if err != nil {
+		panic(err)
+	}
+	for _, v := range bundledFiles {
+		if v.IsDir() {
+			continue
+		}
+		r.StaticFileFS("/"+v.Name(), v.Name(), fs)
+	}
+
+	//seed certain ids just in case
+	//to avoid issues at runtime where things started up and we get a request, just pre-seed the records we want before
+	//we accept requests
+
+	for _, v := range strings.Split(os.Getenv("PRESEED"), ",") {
+		if v == "" {
+			continue
+		}
+
+		path := strings.Split(v, ":")
+		projectId := cast.ToInt(path[0])
+		modId := path[1]
+
+		for _, loader := range []string{"forge", "fabric", "neoforge", "quilt"} {
+			log.Printf("Preseeding %d:%s (%s)", projectId, modId, loader)
+			data, err := getUpdateJson(projectId, modId, loader, context.Background())
+			if err != nil {
+				panic(err)
+			}
+			_ = SetInCache(fmt.Sprintf("https://%s.%s/%d/%s", loader, os.Getenv("HOST"), projectId, modId), http.StatusOK, *data)
+			_ = SetInCache(fmt.Sprintf("https://%s/%d/%s?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
+			_ = SetInCache(fmt.Sprintf("https://forge.%s/%d/%s?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
+
+			_ = SetInCache(fmt.Sprintf("https://%s.%s/%d/%s/references", loader, os.Getenv("HOST"), projectId, modId), http.StatusOK, data.References)
+			_ = SetInCache(fmt.Sprintf("https://%s/%d/%s/references?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
+			_ = SetInCache(fmt.Sprintf("https://forge.%s/%d/%s/references?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
+		}
+	}
 
 	log.Printf("Starting web services\n")
 	err = r.Run()
@@ -66,15 +109,7 @@ func main() {
 func processRequest(c *gin.Context) {
 	pid := c.Param("projectId")
 	modId := c.Param("modId")
-	loader := c.Query("ml")
-	if loader == "" {
-		loader = c.Query("loader")
-		if loader == "" {
-			loader = "forge"
-		}
-	}
-
-	loader = strings.ToLower(loader)
+	loader := getLoader(c)
 
 	var projectId int
 	var err error
@@ -85,7 +120,7 @@ func processRequest(c *gin.Context) {
 
 	data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
 
-	if err == ErrInvalidProjectId || err == ErrUnsupportedGame {
+	if errors.Is(err, ErrInvalidProjectId) || errors.Is(err, ErrUnsupportedGame) {
 		d := map[string]string{"error": err.Error()}
 		SetInCache(c.Request.URL.RequestURI(), http.StatusOK, d)
 		c.JSON(http.StatusBadRequest, d)
@@ -95,10 +130,7 @@ func processRequest(c *gin.Context) {
 		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusInternalServerError, d)
 		cacheHeaders(c, cacheExpireTime)
 		c.Status(http.StatusInternalServerError)
-		return
-	}
-
-	if data != nil {
+	} else if data != nil {
 		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusOK, *data)
 		cacheHeaders(c, cacheExpireTime)
 		c.JSON(http.StatusOK, data)
@@ -110,10 +142,19 @@ func processRequest(c *gin.Context) {
 }
 
 func expireCache(c *gin.Context) {
-	key := strings.TrimSuffix(c.Request.RequestURI, "/expire")
+	basePath := buildUrl(c)
+	basePath = strings.TrimSuffix(basePath, "/expire")
+
+	key := basePath
+	if c.Request.URL.RawQuery != "" {
+		key = key + "?" + c.Request.URL.RawQuery
+	}
 	RemoveFromCache(key)
 
-	key = strings.TrimSuffix(c.Request.RequestURI, "/expire") + "/references"
+	key = basePath + "/references"
+	if c.Request.URL.RawQuery != "" {
+		key = key + "?" + c.Request.URL.RawQuery
+	}
 	RemoveFromCache(key)
 
 	c.Status(http.StatusAccepted)
@@ -122,12 +163,7 @@ func expireCache(c *gin.Context) {
 func getReferences(c *gin.Context) {
 	pid := c.Param("projectId")
 	modId := c.Param("modId")
-	loader := c.Query("ml")
-	if loader == "" {
-		loader = "forge"
-	}
-
-	loader = strings.ToLower(loader)
+	loader := getLoader(c)
 
 	var projectId int
 	var err error
@@ -137,65 +173,30 @@ func getReferences(c *gin.Context) {
 		return
 	}
 
-	db, err := Database(c.Request.Context())
-	if err != nil {
+	data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
+
+	if errors.Is(err, ErrInvalidProjectId) || errors.Is(err, ErrUnsupportedGame) {
+		d := map[string]string{"error": err.Error()}
+		SetInCache(c.Request.URL.RequestURI(), http.StatusOK, d)
+		c.JSON(http.StatusBadRequest, d)
+	} else if err != nil {
 		log.Printf("Error: %s", err.Error())
+		d := map[string]string{"error": err.Error()}
+		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusInternalServerError, d)
+		cacheHeaders(c, cacheExpireTime)
 		c.Status(http.StatusInternalServerError)
-		return
+	} else if data != nil {
+		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusOK, data.References)
+		cacheHeaders(c, cacheExpireTime)
+		c.JSON(http.StatusOK, data.References)
+	} else {
+		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
+		cacheHeaders(c, cacheExpireTime)
+		c.Status(http.StatusNotFound)
 	}
-
-	files := make([]Version, 0)
-	err = db.Model(&Version{}).Where("curse_id = ? AND mod_id = ?", projectId, modId).Find(&files).Error
-	if err != nil {
-		log.Printf("Error: %s", err.Error())
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-
-	results := make(map[string]Version)
-	for _, file := range files {
-		versions := strings.Split(file.GameVersions, ",")
-		if !contains(loader, versions) {
-			continue
-		}
-
-		for _, version := range versions {
-			if contains(version, invalidVersions) {
-				continue
-			}
-			key := version + "-latest"
-			existing, exists := results[key]
-			if !exists {
-				results[key] = file
-			} else if file.ReleaseDate.After(existing.ReleaseDate) {
-				results[key] = file
-			}
-
-			if file.Type == 1 {
-				key = version + "-recommended"
-				existing, exists = results[key]
-				if !exists {
-					results[key] = file
-				} else if file.ReleaseDate.After(existing.ReleaseDate) {
-					results[key] = file
-				}
-			}
-		}
-	}
-
-	references := References{}
-	for k, v := range results {
-		references[k] = v.Url
-	}
-
-	cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusOK, references)
-	cacheHeaders(c, cacheExpireTime)
-	c.JSON(http.StatusOK, references)
 }
 
 func getUpdateJson(projectId int, modId string, loader string, ctx context.Context) (*UpdateJson, error) {
-	results := make(map[string]File)
-
 	project, err := getProject(projectId, ctx)
 	if err != nil {
 		return nil, err
@@ -210,87 +211,72 @@ func getUpdateJson(projectId int, modId string, loader string, ctx context.Conte
 		return nil, err
 	}
 
-	filteredFiles := make([]File, 0)
-
-	for _, file := range curseforgeFiles {
-		if contains(loader, file.GameVersions) {
-			filteredFiles = append(filteredFiles, file)
-		}
-	}
-
-	for _, file := range filteredFiles {
-		//because each file can be associated to multiple versions, check each one
-		for _, version := range file.GameVersions {
-			if contains(version, invalidVersions) {
-				continue
-			}
-			key := version + "-latest"
-			existing, exists := results[key]
-			if !exists {
-				results[key] = file
-			} else if file.FileDate.After(existing.FileDate) {
-				results[key] = file
-			}
-
-			if file.ReleaseType == 1 {
-				key = version + "-recommended"
-				existing, exists = results[key]
-				if !exists {
-					results[key] = file
-				} else if file.FileDate.After(existing.FileDate) {
-					results[key] = file
-				}
-			}
-		}
-	}
-
-	//get each unique file we need to download
-	files := make([]File, 0)
-
-	for _, v := range results {
-		exists := false
-		for _, j := range files {
-			if j.Id == v.Id {
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			files = append(files, v)
-		}
-	}
-
-	versionMap := make(map[int]*Version)
+	versionMap := make(map[uint]*Version)
 
 	var wg sync.WaitGroup
 	var writer sync.Mutex
-	for _, v := range files {
+	for _, v := range curseforgeFiles {
 		wg.Add(1)
 		go func(file File) {
 			defer wg.Done()
 			versionInfo, err := getModVersion(project, file, modId, ctx)
 			if err != nil {
 				log.Printf("Error getting mod version from file: %s", err.Error())
+				return
 			}
 			writer.Lock()
 			defer writer.Unlock()
-			versionMap[file.Id] = versionInfo
+			if versionInfo != nil {
+				versionMap[file.Id] = versionInfo
+			}
 		}(v)
 	}
 	wg.Wait()
 
+	results := make(map[string]*Version)
+
+	for _, v := range versionMap {
+		if v.ModId == modId && v.Version != "" && contains(strings.ToLower(loader), strings.Split(strings.ToLower(v.Loader), ",")) {
+			gameVersions := strings.Split(v.GameVersions, ",")
+			for _, version := range gameVersions {
+				if invalidGameVersionRegex.MatchString(version) {
+					continue
+				}
+				key := version + "-latest"
+				existing, exists := results[key]
+				if !exists {
+					results[key] = v
+				} else if v.ReleaseDate.After(existing.ReleaseDate) {
+					results[key] = v
+				}
+
+				if v.Type == 1 {
+					key = version + "-recommended"
+					existing, exists = results[key]
+					if !exists {
+						results[key] = v
+					} else if v.ReleaseDate.After(existing.ReleaseDate) {
+						results[key] = v
+					}
+				}
+			}
+		}
+	}
+
 	promos := &UpdateJson{
-		Promos:   map[string]string{},
-		HomePage: project.Links.WebsiteUrl,
+		Promos:     map[string]string{},
+		References: map[string]string{},
+		HomePage:   project.Links.WebsiteUrl,
 	}
 
 	for k, v := range results {
-		version, exists := versionMap[v.Id]
+		version, exists := versionMap[v.FileId]
 		if !exists || version == nil {
 			continue
 		}
 		if version.ModId == modId && version.Version != "" {
 			promos.Promos[k] = version.Version
+			promos.References[k] = version.Url
 		}
 	}
 
@@ -315,11 +301,11 @@ func getProject(projectId int, ctx context.Context) (Project, error) {
 	return project.Data, err
 }
 
-func getFiles(projectId int, ctx context.Context) ([]File, error) {
+func getFiles(projectId uint, ctx context.Context) ([]File, error) {
 	files := make([]File, 0)
-	page := 0
+	page := uint(0)
 
-	for {
+	for page < OverflowedPageSize {
 		response, err := getFilesForPage(projectId, page, ctx)
 		if err != nil {
 			return nil, err
@@ -340,7 +326,7 @@ func getFiles(projectId int, ctx context.Context) ([]File, error) {
 	return files, nil
 }
 
-func getFilesForPage(projectId, page int, ctx context.Context) (FileResponse, error) {
+func getFilesForPage(projectId, page uint, ctx context.Context) (FileResponse, error) {
 	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?index=%d&pageSize=%d", projectId, page*PageSize, PageSize)
 
 	response, err := callCurseForge(url, ctx)
@@ -370,11 +356,11 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 	}
 
 	err = db.Where(version).Find(&version).Error
-	if err != nil && err != gorm.ErrRecordNotFound {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return version, err
 	}
 
-	if err == gorm.ErrRecordNotFound || version.Id == 0 {
+	if errors.Is(err, gorm.ErrRecordNotFound) || version.Id == 0 {
 		reader, size, err := downloadFile(curseFile.DownloadUrl, ctx)
 		if err != nil {
 			return version, err
@@ -386,21 +372,13 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 		}
 
 		var manifestVersion string
-		manifestVersion, err = getManifestVersion(r)
-		if err != nil {
-			//ignore errors for now
-		}
+		manifestVersion, _ = getManifestVersion(r)
 
-		var modInfo ModInfo
-		for _, file := range r.File {
-			info, exists := checkZipFile(file, ctx)
-			if exists {
-				modInfo = info
-			}
-		}
+		var modInfo *ModInfo
+		parseJarFile(r, ctx)
 
 		//update info if manifest has a version
-		if manifestVersion != "" {
+		if modInfo != nil && manifestVersion != "" {
 			for k, v := range modInfo.Mods {
 				if v.Version == "${file.jarVersion}" {
 					modInfo.Mods[k] = Mod{
@@ -411,10 +389,22 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 			}
 		}
 
+		if modInfo != nil {
+			if modInfo.ModLoader == "forge" {
+				if contains("NeoForge", curseFile.GameVersions) {
+					modInfo.ModLoader = "forge,neoforge"
+				}
+			} else if modInfo.ModLoader == "fabric" {
+				if contains("Quilt", curseFile.GameVersions) {
+					modInfo.ModLoader = "fabric,quilt"
+				}
+			}
+		}
+
 		version.ReleaseDate = curseFile.FileDate
 		version.Type = curseFile.ReleaseType
 
-		if len(modInfo.Mods) > 0 {
+		if modInfo != nil && len(modInfo.Mods) > 0 {
 			var matchingVersion *Version
 			for _, z := range modInfo.Mods {
 				version.Id = 0 //resets the id so we can create a new row for this mod id
@@ -422,22 +412,13 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 				version.ModId = z.ModId
 				version.Url = fmt.Sprintf("%s/files/%d", project.Links.WebsiteUrl, curseFile.Id)
 				version.GameVersions = strings.Join(curseFile.GameVersions, ",")
+				version.Loader = modInfo.ModLoader
 				err = db.Create(version).Error
 				if err != nil {
 					return version, err
 				}
 				if version.ModId == modId {
-					matchingVersion = &Version{
-						Id:           version.Id,
-						CurseId:      version.CurseId,
-						FileId:       version.FileId,
-						GameVersions: version.GameVersions,
-						ModId:        version.ModId,
-						Version:      version.Version,
-						Type:         version.Type,
-						ReleaseDate:  version.ReleaseDate,
-						Url:          version.Url,
-					}
+					matchingVersion = version
 				}
 			}
 
@@ -445,6 +426,9 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 		}
 
 		//create with no real data, because it doesn't exist
+		version.Url = fmt.Sprintf("%s/files/%d", project.Links.WebsiteUrl, curseFile.Id)
+		version.GameVersions = strings.Join(curseFile.GameVersions, ",")
+
 		err = db.Create(version).Error
 		return version, err
 	}
@@ -463,42 +447,110 @@ func getModVersion(project Project, curseFile File, modId string, ctx context.Co
 	return version, err
 }
 
-func checkZipFile(file *zip.File, ctx context.Context) (ModInfo, bool) {
-	var modInfo ModInfo
+func parseJarFile(file *zip.Reader, ctx context.Context) *ModInfo {
+	var result *ModInfo
+	for _, f := range file.File {
+		info := checkZipFile(f, ctx)
+		if info != nil {
+			if result == nil {
+				result = info
+			} else {
+				result.Mods = append(result.Mods, info.Mods...)
+				result.ModLoader = result.ModLoader + "," + info.ModLoader
+			}
+		}
+	}
+
+	if result != nil {
+		existingLoaders := strings.Split(result.ModLoader, ",")
+		result.ModLoader = strings.Join(dedup(existingLoaders), ",")
+		result.Mods = dedup(result.Mods)
+	}
+
+	return result
+}
+
+func checkZipFile(file *zip.File, ctx context.Context) *ModInfo {
+	var modInfo *ModInfo
 	if file.Name == "META-INF/mods.toml" {
 		data, err := readZipEntry(file)
 		if err != nil {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
-			return modInfo, false
+			return modInfo
 		}
 
-		err = toml.Unmarshal(data, &modInfo)
+		modInfo = &ModInfo{}
+		err = toml.Unmarshal(data, modInfo)
 		if err != nil {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
-			return modInfo, false
+			return nil
 		}
-
-		return modInfo, true
+		modInfo.ModLoader = "forge"
+		return modInfo
 	}
 
 	if file.Name == "fabric.mod.json" || file.Name == "quilt.mod.json" {
 		data, err := readZipEntry(file)
 		if err != nil {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
-			return modInfo, false
+			return modInfo
 		}
 
 		var mod Mod
 		err = json.Unmarshal(data, &mod)
-		modInfo = ModInfo{Mods: []Mod{mod}}
 		if err != nil {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
-			return modInfo, false
+			return modInfo
 		}
-		return modInfo, true
+
+		modInfo = &ModInfo{Mods: []Mod{mod}}
+		if file.Name == "fabric.mod.json" {
+			modInfo.ModLoader = "fabric"
+		}
+		if file.Name == "quilt.mod.json" {
+			modInfo.ModLoader = "quilt"
+		}
+
+		return modInfo
 	}
 
-	return modInfo, false
+	if file.Name == "mcmod.info" {
+		data, err := readZipEntry(file)
+		if err != nil {
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
+			return modInfo
+		}
+
+		//there is 2 possible "variants" of the file that we can expect.
+		//one is the full array, another is an object of them
+		//check for the array first
+		var mods []Mod
+		err = json.Unmarshal(data, &mods)
+
+		//if there is nothing in the array, assume second format
+		if len(mods) == 0 {
+			var alt McMod
+			err = json.Unmarshal(data, &alt)
+			mods = alt.ModList
+		}
+
+		if len(mods) == 0 {
+			return modInfo
+		}
+
+		modInfo = &ModInfo{Mods: mods, ModLoader: "forge"}
+
+		for k, v := range modInfo.Mods {
+			modInfo.Mods[k] = Mod{
+				ModId:   v.OldModId,
+				Version: v.Version,
+			}
+		}
+
+		return modInfo
+	}
+
+	return modInfo
 }
 
 func getManifestVersion(reader *zip.Reader) (string, error) {
@@ -577,17 +629,6 @@ func areEqual(arr1, arr2 []string) bool {
 	return true
 }
 
-func contains(needle string, haystack []string) bool {
-	needle = strings.ToLower(needle)
-	for _, v := range haystack {
-		if strings.ToLower(v) == needle {
-			return true
-		}
-	}
-
-	return false
-}
-
 func cacheHeaders(c *gin.Context, cacheExpireTime time.Time) {
 	maxAge := cacheTtl.Seconds()
 	age := cacheTtl.Seconds() - cacheExpireTime.Sub(time.Now()).Seconds()
@@ -600,7 +641,7 @@ func cacheHeaders(c *gin.Context, cacheExpireTime time.Time) {
 func readFromCache(c *gin.Context) {
 	trans := apm.TransactionFromContext(c.Request.Context())
 
-	cacheData, exists := GetFromCache(c.Request.URL.RequestURI())
+	cacheData, exists := GetFromCache(buildUrl(c))
 	if exists {
 		cacheHeaders(c, cacheData.ExpireAt)
 
@@ -608,7 +649,12 @@ func readFromCache(c *gin.Context) {
 			trans.TransactionData.Context.SetLabel("cached", true)
 		}
 
-		c.JSON(cacheData.Status, cacheData.Data)
+		if cacheData.Data != nil {
+			c.JSON(cacheData.Status, cacheData.Data)
+		} else {
+			c.Status(cacheData.Status)
+		}
+
 		c.Abort()
 	} else {
 		if trans != nil {
@@ -637,6 +683,9 @@ func setTransaction(c *gin.Context) {
 			}
 			trans.TransactionData.Context.SetLabel("useragent."+data[0], data[1])
 		}
+
+		loader := getLoader(c)
+		trans.TransactionData.Context.SetLabel("loader", loader)
 	}
 }
 
@@ -660,4 +709,59 @@ func readManifest(data []byte) map[string]string {
 	}
 
 	return parsed
+}
+
+func getLoader(c *gin.Context) string {
+	loader := c.Query("ml")
+	if loader != "" {
+		return strings.ToLower(loader)
+	}
+	loader = c.Query("loader")
+	if loader != "" {
+		return strings.ToLower(loader)
+	}
+
+	rootHost := os.Getenv("HOST")
+	if rootHost != "" {
+		rootHost = "." + rootHost
+		host := c.Request.Host
+		if strings.HasSuffix(host, rootHost) {
+			return strings.ToLower(strings.TrimSuffix(host, rootHost))
+		}
+	}
+
+	return "forge"
+}
+
+func buildUrl(c *gin.Context) string {
+	return c.Request.Host + c.Request.RequestURI
+}
+
+func dedup[T comparable](source []T) []T {
+	result := make([]T, 0)
+
+	for _, v := range source {
+		exists := false
+		for _, z := range result {
+			if v == z {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			result = append(result, v)
+		}
+	}
+
+	return result
+}
+
+func contains[T comparable](needle T, haystack []T) bool {
+	for _, v := range haystack {
+		if v == needle {
+			return true
+		}
+	}
+
+	return false
 }

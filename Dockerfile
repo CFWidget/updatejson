@@ -1,15 +1,15 @@
-FROM golang:1.18-alpine AS builder
+FROM golang:1.21-alpine AS builder
 
 WORKDIR /updatejson
-COPY . .
 
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+COPY . .
 RUN go build -buildvcs=false -o /go/bin/updatejson github.com/cfwidget/updatejson
 
 FROM alpine
 COPY --from=builder /go/bin/updatejson /go/bin/updatejson
-COPY --from=builder /updatejson/home.html /updatejson/home.html
-COPY --from=builder /updatejson/app.css /updatejson/app.css
-COPY --from=builder /updatejson/app.js /updatejson/app.js
 
 WORKDIR /updatejson
 
@@ -22,7 +22,8 @@ ENV   DB_USER="updatejson" \
       GIN_MODE="release" \
       DB_MODE="release" \
       CORE_KEY="" \
-      CACHE_TTL="1h"
+      CACHE_TTL="1h" \
+      HOST="curseupdate.com"
 
 ENTRYPOINT ["/go/bin/updatejson"]
 CMD [""]

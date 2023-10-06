@@ -72,7 +72,7 @@ type ProjectResponse struct {
 }
 
 type File struct {
-	Id           int
+	Id           uint
 	FileDate     time.Time
 	DownloadUrl  string
 	ReleaseType  int8
@@ -83,7 +83,7 @@ type File struct {
 }
 
 type Project struct {
-	Id     int
+	Id     uint
 	GameId int
 	Links  Links
 }
