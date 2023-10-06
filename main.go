@@ -25,10 +25,11 @@ import (
 )
 
 const PageSize = 50
-const OverflowedPageSize = 100
+const OverflowedPageSize = 20
 
 var ErrUnsupportedGame = errors.New("unsupported game")
 var ErrInvalidProjectId = errors.New("invalid project id")
+var ErrUnauthorized = errors.New("unauthorized")
 
 var invalidGameVersionRegex = regexp.MustCompile("[^0-9.]")
 
@@ -50,6 +51,7 @@ func main() {
 	r := gin.Default()
 	r.Use(apmgin.Middleware(r))
 
+	r.Use(Recover)
 	r.GET("/:projectId/:modId", setTransaction, readFromCache, processRequest)
 	r.GET("/:projectId/:modId/references", setTransaction, readFromCache, getReferences)
 	r.GET("/:projectId/:modId/expire", setTransaction, expireCache)
@@ -87,15 +89,16 @@ func main() {
 			log.Printf("Preseeding %d:%s (%s)", projectId, modId, loader)
 			data, err := getUpdateJson(projectId, modId, loader, context.Background())
 			if err != nil {
-				panic(err)
+				log.Printf("Error refreshing project: %s", err.Error())
+				continue
 			}
-			_ = SetInCache(fmt.Sprintf("https://%s.%s/%d/%s", loader, os.Getenv("HOST"), projectId, modId), http.StatusOK, *data)
-			_ = SetInCache(fmt.Sprintf("https://%s/%d/%s?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
-			_ = SetInCache(fmt.Sprintf("https://forge.%s/%d/%s?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
+			_ = SetInCache(fmt.Sprintf("%s.%s/%d/%s", loader, os.Getenv("HOST"), projectId, modId), http.StatusOK, *data)
+			_ = SetInCache(fmt.Sprintf("%s/%d/%s?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
+			_ = SetInCache(fmt.Sprintf("forge.%s/%d/%s?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
 
-			_ = SetInCache(fmt.Sprintf("https://%s.%s/%d/%s/references", loader, os.Getenv("HOST"), projectId, modId), http.StatusOK, data.References)
-			_ = SetInCache(fmt.Sprintf("https://%s/%d/%s/references?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
-			_ = SetInCache(fmt.Sprintf("https://forge.%s/%d/%s/references?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
+			_ = SetInCache(fmt.Sprintf("%s.%s/%d/%s/references", loader, os.Getenv("HOST"), projectId, modId), http.StatusOK, data.References)
+			_ = SetInCache(fmt.Sprintf("%s/%d/%s/references?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
+			_ = SetInCache(fmt.Sprintf("forge.%s/%d/%s/references?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
 		}
 	}
 
@@ -104,6 +107,18 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func Recover(c *gin.Context) {
+	defer func() {
+		if err := recover(); err != nil {
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{
+				"error": err,
+			})
+		}
+	}()
+
+	c.Next()
 }
 
 func processRequest(c *gin.Context) {
@@ -198,7 +213,7 @@ func getReferences(c *gin.Context) {
 
 func getUpdateJson(projectId int, modId string, loader string, ctx context.Context) (*UpdateJson, error) {
 	project, err := getProject(projectId, ctx)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrUnauthorized) {
 		return nil, err
 	}
 
@@ -206,12 +221,29 @@ func getUpdateJson(projectId int, modId string, loader string, ctx context.Conte
 		return nil, ErrUnsupportedGame
 	}
 
+	versionMap := make(map[uint]*Version)
+
 	curseforgeFiles, err := getFiles(project.Id, ctx)
-	if err != nil {
+	if errors.Is(err, ErrUnauthorized) {
+		//use our DB to pull what we know
+		db, err := Database(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		var versions []*Version
+
+		err = db.Where(&Version{CurseId: project.Id}).Find(&versions).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+
+		for _, v := range versions {
+			versionMap[v.FileId] = v
+		}
+	} else if err != nil {
 		return nil, err
 	}
-
-	versionMap := make(map[uint]*Version)
 
 	var wg sync.WaitGroup
 	var writer sync.Mutex
@@ -292,8 +324,15 @@ func getProject(projectId int, ctx context.Context) (Project, error) {
 	}
 	defer response.Body.Close()
 
-	if response.StatusCode == 404 {
+	if response.StatusCode == http.StatusNotFound {
 		return Project{}, ErrInvalidProjectId
+	}
+	if response.StatusCode != http.StatusOK {
+		return Project{
+			Id:     uint(projectId),
+			GameId: 432,
+			Links:  Links{},
+		}, ErrUnauthorized
 	}
 
 	var project ProjectResponse
@@ -335,8 +374,12 @@ func getFilesForPage(projectId, page uint, ctx context.Context) (FileResponse, e
 	}
 	defer response.Body.Close()
 
-	if response.StatusCode == 404 {
+	if response.StatusCode == http.StatusNotFound {
 		return FileResponse{}, ErrInvalidProjectId
+	}
+
+	if response.StatusCode != http.StatusOK {
+		return FileResponse{}, ErrUnauthorized
 	}
 
 	var curseforgeFiles FileResponse

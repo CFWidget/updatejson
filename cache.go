@@ -13,7 +13,7 @@ type CachedResponse struct {
 }
 
 var cacheTtl time.Duration
-var memcache = sync.Map{}
+var memcache sync.Map
 
 func init() {
 	envCache := env.Get("CACHE_TTL")
@@ -25,6 +25,14 @@ func init() {
 			panic(err)
 		}
 	}
+
+	go func() {
+		c := time.NewTicker(time.Hour)
+		select {
+		case <-c.C:
+			cleanCache()
+		}
+	}()
 }
 
 func GetFromCache(key string) (CachedResponse, bool) {
