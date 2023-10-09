@@ -134,23 +134,24 @@ func processRequest(c *gin.Context) {
 	}
 
 	data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
+	cacheKey := buildUrl(c)
 
 	if errors.Is(err, ErrInvalidProjectId) || errors.Is(err, ErrUnsupportedGame) {
 		d := map[string]string{"error": err.Error()}
-		SetInCache(c.Request.URL.RequestURI(), http.StatusOK, d)
+		SetInCache(cacheKey, http.StatusOK, d)
 		c.JSON(http.StatusBadRequest, d)
 	} else if err != nil {
 		log.Printf("Error: %s", err.Error())
 		d := map[string]string{"error": err.Error()}
-		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusInternalServerError, d)
+		cacheExpireTime := SetInCache(cacheKey, http.StatusInternalServerError, d)
 		cacheHeaders(c, cacheExpireTime)
 		c.Status(http.StatusInternalServerError)
 	} else if data != nil {
-		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusOK, *data)
+		cacheExpireTime := SetInCache(cacheKey, http.StatusOK, *data)
 		cacheHeaders(c, cacheExpireTime)
 		c.JSON(http.StatusOK, data)
 	} else {
-		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
+		cacheExpireTime := SetInCache(cacheKey, http.StatusNotFound, nil)
 		cacheHeaders(c, cacheExpireTime)
 		c.Status(http.StatusNotFound)
 	}
@@ -180,10 +181,12 @@ func getReferences(c *gin.Context) {
 	modId := c.Param("modId")
 	loader := getLoader(c)
 
+	cacheKey := buildUrl(c)
+
 	var projectId int
 	var err error
 	if projectId, err = strconv.Atoi(pid); err != nil {
-		SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
+		SetInCache(cacheKey, http.StatusNotFound, nil)
 		c.Status(http.StatusNotFound)
 		return
 	}
@@ -192,20 +195,20 @@ func getReferences(c *gin.Context) {
 
 	if errors.Is(err, ErrInvalidProjectId) || errors.Is(err, ErrUnsupportedGame) {
 		d := map[string]string{"error": err.Error()}
-		SetInCache(c.Request.URL.RequestURI(), http.StatusOK, d)
+		SetInCache(cacheKey, http.StatusOK, d)
 		c.JSON(http.StatusBadRequest, d)
 	} else if err != nil {
 		log.Printf("Error: %s", err.Error())
 		d := map[string]string{"error": err.Error()}
-		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusInternalServerError, d)
+		cacheExpireTime := SetInCache(cacheKey, http.StatusInternalServerError, d)
 		cacheHeaders(c, cacheExpireTime)
 		c.Status(http.StatusInternalServerError)
 	} else if data != nil {
-		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusOK, data.References)
+		cacheExpireTime := SetInCache(cacheKey, http.StatusOK, data.References)
 		cacheHeaders(c, cacheExpireTime)
 		c.JSON(http.StatusOK, data.References)
 	} else {
-		cacheExpireTime := SetInCache(c.Request.URL.RequestURI(), http.StatusNotFound, nil)
+		cacheExpireTime := SetInCache(cacheKey, http.StatusNotFound, nil)
 		cacheHeaders(c, cacheExpireTime)
 		c.Status(http.StatusNotFound)
 	}
