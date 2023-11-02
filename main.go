@@ -531,7 +531,25 @@ func checkZipFile(file *zip.File, ctx context.Context) *ModInfo {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return nil
 		}
-		modInfo.ModLoader = "forge"
+
+		//see if the deps tell us which one is needed, ignore the mod id though...
+		for _, v := range modInfo.Dependencies {
+			for _, z := range v {
+				if z.ModId == "forge" || z.ModId == "neoforge" {
+					modInfo.ModLoader = z.ModId
+					break
+				}
+			}
+			if modInfo.ModLoader != "" {
+				break
+			}
+		}
+
+		//default to forge at this point
+		if modInfo.ModLoader == "" {
+			modInfo.ModLoader = "forge"
+		}
+
 		return modInfo
 	}
 
