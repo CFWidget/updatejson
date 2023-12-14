@@ -730,22 +730,26 @@ func readFromCache(c *gin.Context) {
 func setTransaction(c *gin.Context) {
 	trans := apm.TransactionFromContext(c.Request.Context())
 	if trans != nil {
-		for k, v := range c.Request.URL.Query() {
-			trans.TransactionData.Context.SetLabel("query."+k, strings.ToLower(strings.Join(v, ",")))
-		}
-
 		for _, v := range c.Params {
 			trans.TransactionData.Context.SetLabel("params."+v.Key, v.Value)
 		}
 
 		userAgent := c.Request.UserAgent()
 		parts := strings.Split(userAgent, " ")
+
+		modId := c.Param("modId")
+
 		for _, v := range parts {
+			//look for the mod id, and store it, with the version
 			data := strings.Split(v, "/")
 			if len(data) != 2 {
 				continue
 			}
-			trans.TransactionData.Context.SetLabel("useragent."+data[0], data[1])
+			if data[0] == modId {
+				trans.TransactionData.Context.SetLabel("mod_id", data[0])
+				trans.TransactionData.Context.SetLabel("mod_version", data[1])
+				break
+			}
 		}
 
 		loader := getLoader(c)
