@@ -133,7 +133,8 @@ func processRequest(c *gin.Context) {
 		return
 	}
 
-	data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
+	var data *UpdateJson
+	data, err = getUpdateJson(projectId, modId, loader, c.Request.Context())
 	cacheKey := buildUrl(c)
 
 	if errors.Is(err, ErrInvalidProjectId) || errors.Is(err, ErrUnsupportedGame) {
@@ -191,7 +192,8 @@ func getReferences(c *gin.Context) {
 		return
 	}
 
-	data, err := getUpdateJson(projectId, modId, loader, c.Request.Context())
+	var data *UpdateJson
+	data, err = getUpdateJson(projectId, modId, loader, c.Request.Context())
 
 	if errors.Is(err, ErrInvalidProjectId) || errors.Is(err, ErrUnsupportedGame) {
 		d := map[string]string{"error": err.Error()}
@@ -226,10 +228,12 @@ func getUpdateJson(projectId int, modId string, loader string, ctx context.Conte
 
 	versionMap := make(map[uint]*Version)
 
-	curseforgeFiles, err := getFiles(project.Id, ctx)
+	var curseforgeFiles []File
+	curseforgeFiles, err = getFiles(project.Id, ctx)
 	if errors.Is(err, ErrUnauthorized) {
 		//use our DB to pull what we know
-		db, err := Database(ctx)
+		var db *gorm.DB
+		db, err = Database(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -745,10 +749,20 @@ func setTransaction(c *gin.Context) {
 			if len(data) != 2 {
 				continue
 			}
+
 			if data[0] == modId {
 				trans.TransactionData.Context.SetLabel("mod_id", data[0])
 				trans.TransactionData.Context.SetLabel("mod_version", data[1])
 				break
+			}
+
+			if data[0] == "MinecraftForge" {
+				trans.TransactionData.Context.SetLabel("gameversion_"+data[0], data[1])
+				trans.TransactionData.Context.SetLabel("minecraftforge", data[1])
+			}
+
+			if data[0] == "FancyModLoader" {
+				trans.TransactionData.Context.SetLabel("fancymodloader", data[1])
 			}
 		}
 
