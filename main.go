@@ -557,6 +557,22 @@ func checkZipFile(file *zip.File, ctx context.Context) *ModInfo {
 		return modInfo
 	}
 
+	if file.Name == "META-INFO/neoforge.mods.toml" {
+		data, err := readZipEntry(file)
+		if err != nil {
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
+			return modInfo
+		}
+
+		modInfo = &ModInfo{}
+		err = toml.Unmarshal(data, modInfo)
+		if err != nil {
+			log.Printf("Error reading %s: %s", file.Name, err.Error())
+			return nil
+		}
+		modInfo.ModLoader = "neoforge"
+	}
+
 	if file.Name == "fabric.mod.json" || file.Name == "quilt.mod.json" {
 		data, err := readZipEntry(file)
 		if err != nil {
