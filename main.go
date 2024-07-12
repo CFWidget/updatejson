@@ -535,6 +535,8 @@ func checkZipFile(file *zip.File, ctx context.Context) *ModInfo {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return nil
 		}
+		//reset what the info actually has for the loader, because we don't care about javafml
+		modInfo.ModLoader = ""
 
 		//see if the deps tell us which one is needed, ignore the mod id though...
 		for _, v := range modInfo.Dependencies {
@@ -557,7 +559,7 @@ func checkZipFile(file *zip.File, ctx context.Context) *ModInfo {
 		return modInfo
 	}
 
-	if file.Name == "META-INFO/neoforge.mods.toml" {
+	if file.Name == "META-INF/neoforge.mods.toml" {
 		data, err := readZipEntry(file)
 		if err != nil {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
@@ -570,7 +572,9 @@ func checkZipFile(file *zip.File, ctx context.Context) *ModInfo {
 			log.Printf("Error reading %s: %s", file.Name, err.Error())
 			return nil
 		}
+		//reset what the info actually has for the loader, because we don't care about javafml
 		modInfo.ModLoader = "neoforge"
+		return modInfo
 	}
 
 	if file.Name == "fabric.mod.json" || file.Name == "quilt.mod.json" {
