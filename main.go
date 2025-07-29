@@ -10,8 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cast"
-	"go.elastic.co/apm/module/apmgin/v2"
-	"go.elastic.co/apm/v2"
 	"gorm.io/gorm"
 	"io"
 	"log"
@@ -46,15 +44,12 @@ func main() {
 		panic(err)
 	}
 
-	_ = apm.DefaultTracer()
-
 	r := gin.Default()
-	r.Use(apmgin.Middleware(r))
 
 	r.Use(Recover)
-	r.GET("/:projectId/:modId", setTransaction, readFromCache, processRequest)
-	r.GET("/:projectId/:modId/references", setTransaction, readFromCache, getReferences)
-	r.GET("/:projectId/:modId/expire", setTransaction, expireCache)
+	r.GET("/:projectId/:modId", readFromCache, processRequest)
+	r.GET("/:projectId/:modId/references", readFromCache, getReferences)
+	r.GET("/:projectId/:modId/expire", expireCache)
 
 	fs := http.FS(webAssets)
 	r.StaticFileFS("/", "home.html", fs)
@@ -95,10 +90,12 @@ func main() {
 			_ = SetInCache(fmt.Sprintf("%s.%s/%d/%s", loader, os.Getenv("HOST"), projectId, modId), http.StatusOK, *data)
 			_ = SetInCache(fmt.Sprintf("%s/%d/%s?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
 			_ = SetInCache(fmt.Sprintf("forge.%s/%d/%s?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
+			_ = SetInCache(fmt.Sprintf("%s.%s/%d/%s?ml=%s", loader, os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, *data)
 
 			_ = SetInCache(fmt.Sprintf("%s.%s/%d/%s/references", loader, os.Getenv("HOST"), projectId, modId), http.StatusOK, data.References)
 			_ = SetInCache(fmt.Sprintf("%s/%d/%s/references?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
 			_ = SetInCache(fmt.Sprintf("forge.%s/%d/%s/references?ml=%s", os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
+			_ = SetInCache(fmt.Sprintf("%s.%s/%d/%s/references?ml=%s", loader, os.Getenv("HOST"), projectId, modId, loader), http.StatusOK, data.References)
 		}
 	}
 
@@ -727,15 +724,9 @@ func cacheHeaders(c *gin.Context, cacheExpireTime time.Time) {
 }
 
 func readFromCache(c *gin.Context) {
-	trans := apm.TransactionFromContext(c.Request.Context())
-
 	cacheData, exists := GetFromCache(buildUrl(c))
 	if exists {
 		cacheHeaders(c, cacheData.ExpireAt)
-
-		if trans != nil {
-			trans.TransactionData.Context.SetLabel("cached", true)
-		}
 
 		if cacheData.Data != nil {
 			c.JSON(cacheData.Status, cacheData.Data)
@@ -744,50 +735,6 @@ func readFromCache(c *gin.Context) {
 		}
 
 		c.Abort()
-	} else {
-		if trans != nil {
-			trans.TransactionData.Context.SetLabel("cached", false)
-		}
-	}
-}
-
-func setTransaction(c *gin.Context) {
-	trans := apm.TransactionFromContext(c.Request.Context())
-	if trans != nil {
-		for _, v := range c.Params {
-			trans.TransactionData.Context.SetLabel("params."+v.Key, v.Value)
-		}
-
-		userAgent := c.Request.UserAgent()
-		parts := strings.Split(userAgent, " ")
-
-		modId := c.Param("modId")
-
-		for _, v := range parts {
-			//look for the mod id, and store it, with the version
-			data := strings.Split(v, "/")
-			if len(data) != 2 {
-				continue
-			}
-
-			if data[0] == modId {
-				trans.TransactionData.Context.SetLabel("mod_id", data[0])
-				trans.TransactionData.Context.SetLabel("mod_version", data[1])
-				break
-			}
-
-			if data[0] == "MinecraftForge" {
-				trans.TransactionData.Context.SetLabel("gameversion_"+data[0], data[1])
-				trans.TransactionData.Context.SetLabel("minecraftforge", data[1])
-			}
-
-			if data[0] == "FancyModLoader" {
-				trans.TransactionData.Context.SetLabel("fancymodloader", data[1])
-			}
-		}
-
-		loader := getLoader(c)
-		trans.TransactionData.Context.SetLabel("loader", loader)
 	}
 }
 

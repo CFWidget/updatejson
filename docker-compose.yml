@@ -1,7 +1,6 @@
-version: "3.3"
 services:
   updatejson:
-    image: ghcr.io/cfwidget/updatejson:${TAG}
+    image: ghcr.io/cfwidget/updatejson:latest
     restart: always
     depends_on:
       - database
@@ -15,10 +14,6 @@ services:
       CORE_KEY_FILE: "/run/secrets/curse_key"
       CACHE_TTL: "${CACHE_TTL}"
       HOST: "${HOST}"
-      ELASTIC_APM_SERVER_URL: "${ELASTIC_APM_SERVER_URL}"
-      ELASTIC_APM_SERVICE_NAME: "${ELASTIC_APM_SERVICE_NAME}"
-      ELASTIC_APM_ENVIRONMENT: "${ELASTIC_APM_ENVIRONMENT}"
-      ELASTIC_APM_VERIFY_SERVER_CERT: "${ELASTIC_APM_VERIFY_SERVER_CERT}"
       PRESEED: "${PRESEED}"
     secrets:
       - curse_key
@@ -26,7 +21,6 @@ services:
     networks:
       - default
       - ingress_default
-      - elastic
     deploy:
       labels:
         - "traefik.enable=true"
@@ -74,6 +68,4 @@ volumes:
 
 networks:
   ingress_default:
-    external: true
-  elastic:
     external: true

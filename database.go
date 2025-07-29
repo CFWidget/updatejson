@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/cfwidget/updatejson/env"
 	"github.com/go-gormigrate/gormigrate/v2"
-	mysql "go.elastic.co/apm/module/apmgormv2/v2/driver/mysql"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"log"
 	"sync"
@@ -27,8 +27,8 @@ func Database(ctx context.Context) (*gorm.DB, error) {
 		}
 
 		sqlDB, _ := _db.DB()
-		sqlDB.SetMaxIdleConns(10)
-		sqlDB.SetMaxOpenConns(100)
+		sqlDB.SetMaxIdleConns(1)
+		sqlDB.SetMaxOpenConns(10)
 		sqlDB.SetConnMaxLifetime(time.Hour)
 
 		if env.Get("DB_MODE") != "release" {

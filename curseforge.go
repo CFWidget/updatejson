@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"github.com/cfwidget/updatejson/env"
-	"go.elastic.co/apm/module/apmhttp/v2"
 	"log"
 	"net/http"
 	"net/url"
@@ -13,7 +12,7 @@ import (
 var _client *http.Client
 
 func init() {
-	_client = apmhttp.WrapClient(&http.Client{})
+	_client = &http.Client{}
 }
 
 func callCurseForge(requestUrl string, ctx context.Context) (*http.Response, error) {
