@@ -1,14 +1,16 @@
 package env
 
 import (
-	"github.com/spf13/cast"
 	"io"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/spf13/cast"
 )
 
 func Get(key string) string {
+	key = strings.ToUpper(key)
 	filename := os.Getenv(key + "_FILE")
 	if filename == "" {
 		return os.Getenv(key)

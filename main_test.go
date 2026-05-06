@@ -3,9 +3,12 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"testing"
+
+	"github.com/cfwidget/updatejson/models"
+	"github.com/cfwidget/updatejson/util"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func Test_areEqual(t *testing.T) {
@@ -69,7 +72,7 @@ func Test_areEqual(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := areEqual(tt.args.arr1, tt.args.arr2); got != tt.want {
+			if got := util.AreEqual(tt.args.arr1, tt.args.arr2); got != tt.want {
 				t.Errorf("areEqual() = %v, want %v", got, tt.want)
 			}
 		})
@@ -118,7 +121,7 @@ func Test_GetModLoaderFromJar(t *testing.T) {
 				return
 			}
 
-			var modInfo *ModInfo
+			var modInfo *models.ModInfo
 			modInfo = parseJarFile(r, ctx)
 
 			if !assert.NotNil(t, modInfo, "error parsing file") {
@@ -133,7 +136,7 @@ func Test_GetModLoaderFromJar(t *testing.T) {
 }
 
 func Test_UnmarshalTOML(t *testing.T) {
-	modInfo := &ModInfo{}
+	modInfo := &models.ModInfo{}
 	err := toml.Unmarshal([]byte(testTOML), modInfo)
 	if !assert.NoError(t, err, "error reading file") {
 		return
