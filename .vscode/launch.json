@@ -4,8 +4,6 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        
-
         {
             "name": "Launch Package",
             "type": "go",
@@ -13,9 +11,8 @@
             "mode": "auto",
             "program": "github.com/cfwidget/updatejson",
             "env": {
-                "DB_USER": "updatejson",
-                "DB_PASS": "updatejson",
-                "DB_DATABASE": "updatejson"
+                "DB_FILE": "updatejson.db",
+                "CORE_KEY_FILE": "core.key"
             }
         }
     ]
