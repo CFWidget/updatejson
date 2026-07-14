@@ -1,12 +1,20 @@
-FROM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
+
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+COPY --from=xx / /
 
 WORKDIR /updatejson
 
 COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+RUN xx-go mod download && xx-go mod verify
 
 COPY . .
-RUN go build -buildvcs=false -o /go/bin/updatejson github.com/cfwidget/updatejson
+RUN xx-go build -buildvcs=false -o /go/bin/updatejson github.com/cfwidget/updatejson && \
+    xx-verify /go/bin/updatejson
 
 FROM alpine
 COPY --from=builder /go/bin/updatejson /go/bin/updatejson
