@@ -10,6 +10,7 @@ services:
       DB_PASS_FILE: "/run/secrets/updatejson_db_pw"
       DB_HOST: "database"
       DB_DATABASE: "updatejson"
+      DB_ENGINE: "mysql"
       GIN_MODE: "${GIN_MODE}"
       DB_MODE: "${DB_MODE}"
       CORE_KEY_FILE: "/run/secrets/curse_key"
