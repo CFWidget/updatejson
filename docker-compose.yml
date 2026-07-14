@@ -41,7 +41,7 @@ services:
     restart: always
     environment:
       MARIADB_USER: "updatejson"
-      MARIADB_PASSWORD_PASSWORD: "/run/secrets/updatejson_db_pw"
+      MARIADB_PASSWORD_FILE: "/run/secrets/updatejson_db_pw"
       MARIADB_DATABASE: "updatejson"
       MARIADB_RANDOM_ROOT_PASSWORD: 1
     secrets:
