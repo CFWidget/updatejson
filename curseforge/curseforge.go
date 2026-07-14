@@ -131,6 +131,7 @@ func DownloadFile(requestUrl string, ctx context.Context) (*http.Response, error
 		URL:    path,
 		Header: http.Header{},
 	}
+	request.Header.Add("x-api-key", env.Get("CORE_KEY"))
 
 	if env.GetBool("DEBUG") {
 		logger.FromContext(ctx).Printf("[GET] %s\n", path.String())
