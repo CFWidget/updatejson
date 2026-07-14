@@ -3,12 +3,14 @@ services:
     image: ghcr.io/cfwidget/updatejson:latest
     restart: always
     depends_on:
-      - database
+      database:
+        condition: service_healthy
     environment:
-      DB_USER: "${DB_USER}"
+      DB_USER: "updatejson"
       DB_PASS_FILE: "/run/secrets/updatejson_db_pw"
-      DB_HOST: "${DB_HOST}"
-      DB_DATABASE: "${DB_DATABASE}"
+      DB_HOST: "database"
+      DB_DATABASE: "updatejson"
+      DB_ENGINE: "mysql"
       GIN_MODE: "${GIN_MODE}"
       DB_MODE: "${DB_MODE}"
       CORE_KEY_FILE: "/run/secrets/curse_key"
@@ -39,10 +41,10 @@ services:
     image: mariadb
     restart: always
     environment:
-      MYSQL_USER: "${DB_USER}"
-      MYSQL_PASSWORD_FILE: "/run/secrets/updatejson_db_pw"
-      MYSQL_DATABASE: "${DB_DATABASE}"
-      MYSQL_RANDOM_ROOT_PASSWORD: "true"
+      MARIADB_USER: "updatejson"
+      MARIADB_PASSWORD_PASSWORD: "/run/secrets/updatejson_db_pw"
+      MARIADB_DATABASE: "updatejson"
+      MARIADB_RANDOM_ROOT_PASSWORD: 1
     secrets:
       - updatejson_db_pw
     volumes:
@@ -51,6 +53,12 @@ services:
       placement:
         constraints:
           - "node.role==manager"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 3
     logging:
       driver: "json-file"
       options:

@@ -1,13 +1,16 @@
-package main
+package cache
 
 import (
-	"github.com/cfwidget/updatejson/env"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/cfwidget/updatejson/env"
+	"github.com/gin-gonic/gin"
 )
 
 type CachedResponse struct {
-	Data     interface{}
+	Data     any
 	ExpireAt time.Time
 	Status   int
 }
@@ -27,7 +30,7 @@ func init() {
 	}
 
 	go func() {
-		c := time.NewTicker(time.Hour)
+		c := time.NewTicker(5 * time.Minute)
 		select {
 		case <-c.C:
 			cleanCache()
@@ -35,7 +38,16 @@ func init() {
 	}()
 }
 
-func GetFromCache(key string) (CachedResponse, bool) {
+func AddHeaders(c *gin.Context, cacheExpireTime time.Time) {
+	maxAge := cacheTtl.Seconds()
+	age := cacheTtl.Seconds() - cacheExpireTime.Sub(time.Now()).Seconds()
+
+	c.Header("Cache-Control", fmt.Sprintf("max-age=%.0f, public", maxAge))
+	c.Header("Age", fmt.Sprintf("%.0f", age))
+	c.Header("MemCache-Expires-At", cacheExpireTime.UTC().Format(time.RFC3339))
+}
+
+func Get(key string) (CachedResponse, bool) {
 	val, exists := memcache.Load(key)
 	if !exists {
 		return CachedResponse{}, false
@@ -50,18 +62,26 @@ func GetFromCache(key string) (CachedResponse, bool) {
 	return res, true
 }
 
-func SetInCache(key string, status int, data interface{}) time.Time {
+func GetByRequest(c *gin.Context) (CachedResponse, bool) {
+	return Get(GetKey(c))
+}
+
+func Set(key string, status int, data any) time.Time {
 	cache := CachedResponse{Data: data, Status: status, ExpireAt: time.Now().Add(cacheTtl)}
 	memcache.Store(key, cache)
 	return cache.ExpireAt
 }
 
-func RemoveFromCache(key string) {
+func Remove(key string) {
 	memcache.Delete(key)
 }
 
+func GetKey(c *gin.Context) string {
+	return c.Request.Host + c.Request.RequestURI
+}
+
 func cleanCache() {
-	memcache.Range(func(k, v interface{}) bool {
+	memcache.Range(func(k, v any) bool {
 		res, ok := v.(CachedResponse)
 		if !ok || time.Now().After(res.ExpireAt) {
 			memcache.Delete(k)
