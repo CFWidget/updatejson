@@ -12,7 +12,8 @@
             "program": "github.com/cfwidget/updatejson",
             "env": {
                 "DB_FILE": "updatejson.db",
-                "CORE_KEY_FILE": "core.key"
+                "CORE_KEY_FILE": "core.key",
+                "DEBUG": "true"
             }
         }
     ]

@@ -13,14 +13,15 @@ import (
 	"github.com/cfwidget/updatejson/models"
 )
 
-var downloaderWorkerQueue = make(chan *QueueItem, 10)
+var downloaderWorkerQueue chan *QueueItem
 var workers []*Worker
 
 func init() {
-	numWorkers := env.GetInt("downloaders")
+	numWorkers := env.GetInt("DOWNLOADERS")
 	if numWorkers <= 0 {
 		numWorkers = runtime.NumCPU() / 2
 	}
+	downloaderWorkerQueue = make(chan *QueueItem, numWorkers*2)
 	for i := range numWorkers {
 		w := &Worker{Id: i, Logger: logger.New(fmt.Sprintf("Worker-%d", i)), Stop: make(chan bool)}
 		workers = append(workers, w)

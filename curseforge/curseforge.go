@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/cfwidget/updatejson/logger"
 )
 
-const BaseUrl string = "https://api.curseforge.com/v1"
+const BaseUrl string = "https://api.curseforge.com/v1/"
 const PageSize = 50
 const OverflowedPageSize = 20
 
@@ -97,11 +98,7 @@ func getFilesForPage(projectId, page uint, ctx context.Context) (FileResponse, e
 func Call(requestUri string, ctx context.Context) (*http.Response, error) {
 	key := env.Get("CORE_KEY")
 
-	p, err := url.JoinPath(BaseUrl, requestUri)
-	if err != nil {
-		return nil, err
-	}
-	path, err := url.Parse(p)
+	path, err := url.Parse(BaseUrl + requestUri)
 	if err != nil {
 		return nil, err
 	}
@@ -113,11 +110,20 @@ func Call(requestUri string, ctx context.Context) (*http.Response, error) {
 	}
 	request.Header.Add("x-api-key", key)
 
+	response, err := _client.Do(request.WithContext(ctx))
 	if env.GetBool("DEBUG") {
-		logger.FromContext(ctx).Printf("[GET] %s\n", path.String())
+		logger.FromContext(ctx).Printf("[GET] [%d] %s\n", response.StatusCode, path.String())
+	}
+	if response.StatusCode == http.StatusTooManyRequests {
+		_ = response.Body.Close()
+		time.Sleep(time.Duration(rand.Intn(30)+5) * time.Second)
+		response, err = _client.Do(request.WithContext(ctx))
+		if env.GetBool("DEBUG") {
+			logger.FromContext(ctx).Printf("[GET] [%d] %s\n", response.StatusCode, path.String())
+		}
 	}
 
-	return _client.Do(request.WithContext(ctx))
+	return response, err
 }
 
 func DownloadFile(requestUrl string, ctx context.Context) (*http.Response, error) {
@@ -133,11 +139,11 @@ func DownloadFile(requestUrl string, ctx context.Context) (*http.Response, error
 	}
 	request.Header.Add("x-api-key", env.Get("CORE_KEY"))
 
+	response, err := _client.Do(request.WithContext(ctx))
 	if env.GetBool("DEBUG") {
-		logger.FromContext(ctx).Printf("[GET] %s\n", path.String())
+		logger.FromContext(ctx).Printf("[GET] [%d] %s\n", response.StatusCode, path.String())
 	}
-
-	return _client.Do(request.WithContext(ctx))
+	return response, err
 }
 
 type Response struct {

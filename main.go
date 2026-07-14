@@ -131,7 +131,7 @@ func processRequest(c *gin.Context) {
 
 	if errors.Is(err, curseforge.ErrInvalidProjectId) || errors.Is(err, curseforge.ErrUnsupportedGame) {
 		d := map[string]string{"error": err.Error()}
-		cache.Set(cacheKey, http.StatusOK, d)
+		cache.Set(cacheKey, http.StatusBadRequest, d)
 		c.JSON(http.StatusBadRequest, d)
 	} else if err != nil {
 		logger.Printf(c.Request.Context(), "Error: %s", err.Error())

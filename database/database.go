@@ -49,7 +49,7 @@ func Initialize() {
 
 	if env.Get("DB_MODE") != "release" {
 		_db = _db.Debug()
-		log.Panicf("Set DB_MODE to 'release' to disable debug database logger\n")
+		log.Println("Set DB_MODE to 'release' to disable debug database logger")
 	}
 
 	err = _db.AutoMigrate(&models.Version{})
@@ -74,5 +74,10 @@ func Get(ctx context.Context) (*gorm.DB, error) {
 }
 
 func reset(db *gorm.DB) error {
-	return db.Exec("TRUNCATE TABLE versions").Error
+	err := db.Exec("TRUNCATE TABLE versions").Error
+	if err != nil {
+		log.Printf("Error truncating table, using DELETE instea\n%s\n", err)
+		err = db.Exec("DELETE FROM versions").Error
+	}
+	return err
 }
