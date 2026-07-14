@@ -3,8 +3,7 @@ services:
     image: ghcr.io/cfwidget/updatejson:latest
     restart: always
     depends_on:
-      database:
-        condition: service_healthy
+      - database
     environment:
       DB_USER: "updatejson"
       DB_PASS_FILE: "/run/secrets/updatejson_db_pw"
