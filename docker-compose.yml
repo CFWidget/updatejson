@@ -52,12 +52,6 @@ services:
       placement:
         constraints:
           - "node.role==manager"
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      start_period: 10s
-      interval: 10s
-      timeout: 5s
-      retries: 3
     logging:
       driver: "json-file"
       options:
