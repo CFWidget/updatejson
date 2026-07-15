@@ -45,6 +45,7 @@ func main() {
 	r.GET("/:projectId/:modId", readFromCache, processRequest)
 	r.GET("/:projectId/:modId/references", readFromCache, getReferences)
 	r.GET("/:projectId/:modId/expire", expireCache)
+	r.GET("/:projectId/:modId/force", markForce, processRequest)
 
 	fs := http.FS(webAssets)
 	r.StaticFileFS("/", "home.html", fs)
@@ -113,6 +114,10 @@ func Recover(c *gin.Context) {
 	c.Next()
 }
 
+func markForce(c *gin.Context) {
+	c.Set("force", true)
+}
+
 func processRequest(c *gin.Context) {
 	pid := c.Param("projectId")
 	modId := c.Param("modId")
@@ -125,8 +130,13 @@ func processRequest(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
+	if c.GetBool("force") {
+		ctx = context.WithValue(ctx, "force", true)
+	}
+
 	var data *models.UpdateJson
-	data, err = getUpdateJson(projectId, modId, loader, c.Request.Context())
+	data, err = getUpdateJson(projectId, modId, loader, ctx)
 	cacheKey := cache.GetKey(c)
 
 	if errors.Is(err, curseforge.ErrInvalidProjectId) || errors.Is(err, curseforge.ErrUnsupportedGame) {
@@ -319,6 +329,7 @@ func getModVersion(project curseforge.Project, curseFile curseforge.File, modId 
 	version := &models.Version{
 		CurseId: project.Id,
 		FileId:  curseFile.Id,
+		ModId:   modId,
 	}
 
 	err = db.Where(version).Find(&version).Error
@@ -326,7 +337,7 @@ func getModVersion(project curseforge.Project, curseFile curseforge.File, modId 
 		return version, err
 	}
 
-	if errors.Is(err, gorm.ErrRecordNotFound) || version.Id == 0 {
+	if errors.Is(err, gorm.ErrRecordNotFound) || version.Id == 0 || GetFromContext(ctx, "force") {
 		reader, size, err := downloadFile(curseFile.DownloadUrl, ctx)
 		defer util.Close(reader)
 		if err != nil {
@@ -341,30 +352,26 @@ func getModVersion(project curseforge.Project, curseFile curseforge.File, modId 
 		var manifestVersion string
 		manifestVersion, _ = getManifestVersion(r)
 
-		var modInfo *models.ModInfo
-		modInfo = parseJarFile(r, ctx)
+		var modsInFile []*models.Mod
+		modsInFile = parseJarFile(r, ctx)
 
-		//update info if manifest has a version
-		if modInfo != nil && manifestVersion != "" {
-			for k, v := range modInfo.Mods {
+		if len(modsInFile) > 0 {
+			for _, v := range modsInFile {
 				if v.Version == "${file.jarVersion}" {
-					modInfo.Mods[k] = models.Mod{
-						ModId:   v.ModId,
-						Version: manifestVersion,
-					}
+					v.Version = manifestVersion
 				}
-			}
-		}
 
-		if modInfo != nil {
-			switch modInfo.ModLoader {
-			case "forge":
-				if slices.Contains(curseFile.GameVersions, "NeoForge") {
-					modInfo.ModLoader = "forge,neoforge"
-				}
-			case "fabric":
-				if slices.Contains(curseFile.GameVersions, "Quilt") {
-					modInfo.ModLoader = "fabric,quilt"
+				if len(v.Dependencies) == 1 {
+					switch v.Dependencies[0] {
+					case "forge":
+						if slices.Contains(curseFile.GameVersions, "NeoForge") {
+							v.Dependencies = append(v.Dependencies, "neoforge")
+						}
+					case "fabric":
+						if slices.Contains(curseFile.GameVersions, "Quilt") {
+							v.Dependencies = append(v.Dependencies, "quilt")
+						}
+					}
 				}
 			}
 		}
@@ -372,16 +379,30 @@ func getModVersion(project curseforge.Project, curseFile curseforge.File, modId 
 		version.ReleaseDate = curseFile.FileDate
 		version.Type = curseFile.ReleaseType
 
-		if modInfo != nil && len(modInfo.Mods) > 0 {
+		if len(modsInFile) > 0 {
 			var matchingVersion *models.Version
-			for _, z := range modInfo.Mods {
+
+			var replacement = &models.Version{
+				CurseId: version.CurseId,
+				FileId:  version.FileId,
+				ModId:   version.ModId,
+			}
+
+			for _, z := range modsInFile {
 				version.Id = 0 //resets the id so we can create a new row for this mod id
+				existingIdMap := &models.Id{}
+				replacement.ModId = z.Id
+				err = db.Model(&replacement).Where(replacement).First(existingIdMap).Error
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return version, err
+				}
+				version.Id = existingIdMap.Id
 				version.Version = z.Version
-				version.ModId = z.ModId
+				version.ModId = z.Id
 				version.Url = fmt.Sprintf("%s/files/%d", project.Links.WebsiteUrl, curseFile.Id)
 				version.GameVersions = strings.Join(curseFile.GameVersions, ",")
-				version.Loader = modInfo.ModLoader
-				err = db.Create(version).Error
+				version.Loader = strings.Join(z.Dependencies, ",")
+				err = db.Save(&version).Error
 				if err != nil {
 					return version, err
 				}
@@ -397,26 +418,26 @@ func getModVersion(project curseforge.Project, curseFile curseforge.File, modId 
 		version.Url = fmt.Sprintf("%s/files/%d", project.Links.WebsiteUrl, curseFile.Id)
 		version.GameVersions = strings.Join(curseFile.GameVersions, ",")
 
-		err = db.Create(version).Error
+		err = db.Save(&version).Error
 		return version, err
 	}
 
 	currentVersions := strings.Split(version.GameVersions, ",")
 	if !util.AreEqual(currentVersions, curseFile.GameVersions) {
 		version.GameVersions = strings.Join(curseFile.GameVersions, ",")
-		err = db.Save(version).Error
+		err = db.Save(&version).Error
 	}
 
 	if version.Type != curseFile.ReleaseType {
 		version.Type = curseFile.ReleaseType
-		err = db.Save(version).Error
+		err = db.Save(&version).Error
 	}
 
 	return version, err
 }
 
-func parseJarFile(file *zip.Reader, ctx context.Context) *models.ModInfo {
-	var result *models.ModInfo
+func parseJarFile(file *zip.Reader, ctx context.Context) []*models.Mod {
+	var result []*models.Mod
 	for _, f := range file.File {
 		info, err := checkZipFile(f, ctx)
 		if err != nil {
@@ -425,72 +446,65 @@ func parseJarFile(file *zip.Reader, ctx context.Context) *models.ModInfo {
 			if result == nil {
 				result = info
 			} else {
-				result.Mods = append(result.Mods, info.Mods...)
-				result.ModLoader = result.ModLoader + "," + info.ModLoader
+				result = append(result, info...)
 			}
 		}
 	}
 
 	if result != nil {
-		existingLoaders := strings.Split(result.ModLoader, ",")
-		result.ModLoader = strings.Join(util.Dedup(existingLoaders), ",")
-		result.Mods = util.Dedup(result.Mods)
+		result = util.Dedup(result)
 	}
 
 	return result
 }
 
-func checkZipFile(file *zip.File, ctx context.Context) (*models.ModInfo, error) {
-	var modInfo *models.ModInfo
-	if file.Name == "META-INF/mods.toml" {
+func checkZipFile(file *zip.File, ctx context.Context) ([]*models.Mod, error) {
+	result := make([]*models.Mod, 0)
+
+	if file.Name == "META-INF/mods.toml" || file.Name == "META-INF/neoforge.mods.toml" {
 		data, err := readZipEntry(file)
 		if err != nil {
-			return modInfo, err
+			return nil, err
 		}
 
-		modInfo = &models.ModInfo{}
+		modInfo := &models.TomlModInfo{}
 		err = toml.Unmarshal(data, modInfo)
 		if err != nil {
 			return nil, err
 		}
-		//reset what the info actually has for the loader, because we don't care about javafml
-		modInfo.ModLoader = ""
 
-		//see if the deps tell us which one is needed, ignore the mod id though...
-		for _, v := range modInfo.Dependencies {
-			for _, z := range v {
-				if z.ModId == "forge" || z.ModId == "neoforge" {
-					modInfo.ModLoader = z.ModId
-					break
+		for _, v := range modInfo.Mods {
+			mod := &models.Mod{
+				Id:           v.ModId,
+				Version:      v.Version,
+				Dependencies: make([]string, 0),
+			}
+
+			//see if the deps tell us which one is needed, ignore the mod id though...
+			for k, v := range modInfo.Dependencies {
+				if k == mod.Id {
+					for _, z := range v {
+						if z.ModId == "forge" || z.ModId == "neoforge" {
+							mod.Dependencies = append(mod.Dependencies, z.ModId)
+							break
+						}
+					}
 				}
 			}
-			if modInfo.ModLoader != "" {
-				break
+
+			//default to forge/neoforge at this point
+			if len(mod.Dependencies) == 0 {
+				if file.Name == "META-INF/neoforge.mods.toml" {
+					mod.Dependencies = []string{"neoforge"}
+				} else {
+					mod.Dependencies = []string{"forge"}
+				}
 			}
+
+			result = append(result, mod)
 		}
 
-		//default to forge at this point
-		if modInfo.ModLoader == "" {
-			modInfo.ModLoader = "forge"
-		}
-
-		return modInfo, nil
-	}
-
-	if file.Name == "META-INF/neoforge.mods.toml" {
-		data, err := readZipEntry(file)
-		if err != nil {
-			return nil, err
-		}
-
-		modInfo = &models.ModInfo{}
-		err = toml.Unmarshal(data, modInfo)
-		if err != nil {
-			return nil, err
-		}
-		//reset what the info actually has for the loader, because we don't care about javafml
-		modInfo.ModLoader = "neoforge"
-		return modInfo, nil
+		return result, nil
 	}
 
 	if file.Name == "fabric.mod.json" || file.Name == "quilt.mod.json" {
@@ -499,21 +513,25 @@ func checkZipFile(file *zip.File, ctx context.Context) (*models.ModInfo, error) 
 			return nil, err
 		}
 
-		var mod models.Mod
+		var mod models.JsonMod
 		err = json.Unmarshal(data, &mod)
 		if err != nil {
 			return nil, err
 		}
 
-		modInfo = &models.ModInfo{Mods: []models.Mod{mod}}
-		if file.Name == "fabric.mod.json" {
-			modInfo.ModLoader = "fabric"
-		}
-		if file.Name == "quilt.mod.json" {
-			modInfo.ModLoader = "quilt"
+		var resultMod = &models.Mod{
+			Id:      mod.ModId,
+			Version: mod.Version,
 		}
 
-		return modInfo, nil
+		if file.Name == "quilt.mod.json" {
+			resultMod.Dependencies = []string{"quilt"}
+		} else {
+			resultMod.Dependencies = []string{"fabric"}
+		}
+
+		result = append(result, resultMod)
+		return result, nil
 	}
 
 	if file.Name == "mcmod.info" {
@@ -525,7 +543,7 @@ func checkZipFile(file *zip.File, ctx context.Context) (*models.ModInfo, error) 
 		//there is 2 possible "variants" of the file that we can expect.
 		//one is the full array, another is an object of them
 		//check for the array first
-		var mods []models.Mod
+		var mods []models.JsonMod
 		err = json.Unmarshal(data, &mods)
 
 		//if there is nothing in the array, assume second format
@@ -535,23 +553,19 @@ func checkZipFile(file *zip.File, ctx context.Context) (*models.ModInfo, error) 
 			mods = alt.ModList
 		}
 
-		if len(mods) == 0 {
-			return modInfo, nil
-		}
-
-		modInfo = &models.ModInfo{Mods: mods, ModLoader: "forge"}
-
-		for k, v := range modInfo.Mods {
-			modInfo.Mods[k] = models.Mod{
-				ModId:   v.OldModId,
-				Version: v.Version,
+		for _, v := range mods {
+			z := &models.Mod{
+				Id:           v.LegacyFormatModId,
+				Version:      v.Version,
+				Dependencies: []string{"forge"},
 			}
+			result = append(result, z)
 		}
 
-		return modInfo, nil
+		return result, nil
 	}
 
-	return modInfo, nil
+	return result, nil
 }
 
 func getManifestVersion(reader *zip.Reader) (string, error) {
@@ -645,4 +659,10 @@ func getLoader(c *gin.Context) string {
 	}
 
 	return "forge"
+}
+
+func GetFromContext(ctx context.Context, key string) bool {
+	val := ctx.Value(key)
+	t, ok := val.(bool)
+	return ok && t
 }

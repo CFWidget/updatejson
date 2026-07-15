@@ -1,23 +1,9 @@
 package models
 
-type ModInfo struct {
-	Mods         []Mod
-	ModLoader    string
-	Dependencies map[string][]Dependency
-}
-
 type Mod struct {
-	ModId    string `json:"id"`
-	Version  string `json:"version"`
-	OldModId string `json:"modid"`
-}
-
-type Dependency struct {
-	ModId string
-}
-
-type McMod struct {
-	ModList []Mod
+	Id           string
+	Version      string
+	Dependencies []string
 }
 
 type UpdateJson struct {

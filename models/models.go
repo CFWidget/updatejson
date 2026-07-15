@@ -14,3 +14,7 @@ type Version struct {
 	Url          string `gorm:"type:varchar(500)"`
 	Loader       string
 }
+
+type Id struct {
+	Id uint
+}

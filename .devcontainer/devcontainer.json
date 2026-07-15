@@ -5,7 +5,8 @@
 			"extensions": [
 				"golang.Go",
 				"GitHub.vscode-github-actions",
-				"ms-azuretools.vscode-containers"
+				"ms-azuretools.vscode-containers",
+				"qwtel.sqlite-viewer"
 			]
 		}
 	}
