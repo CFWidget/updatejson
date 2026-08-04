@@ -103,27 +103,32 @@ func Test_GetModLoaderFromJar(t *testing.T) {
 	type test struct {
 		Name   string
 		URL    string
+		ModId  string
 		Loader []string
 	}
 	tests := []test{
 		{
 			Name:   "journeymap-forge",
 			URL:    "https://edge.forgecdn.net/files/4774/257/journeymap-1.20.1-5.9.15-forge.jar",
+			ModId:  "journeymap",
 			Loader: []string{"forge"},
 		},
 		{
 			Name:   "journeymap-forge-old",
 			URL:    "https://edge.forgecdn.net/files/2916/2/journeymap-1.12.2-5.7.1.jar",
+			ModId:  "journeymap",
 			Loader: []string{"forge"},
 		},
 		{
 			Name:   "journeymap-fabric",
 			URL:    "https://edge.forgecdn.net/files/3821/710/journeymap-1.19-5.8.5-fabric.jar",
+			ModId:  "journeymap",
 			Loader: []string{"fabric"},
 		},
 		{
 			Name:   "journeymap-neoforge",
 			URL:    "https://edge.forgecdn.net/files/4828/101/journeymap-1.20.2-5.9.15-neoforge.jar",
+			ModId:  "journeymap",
 			Loader: []string{"neoforge"},
 		},
 	}
@@ -148,7 +153,15 @@ func Test_GetModLoaderFromJar(t *testing.T) {
 				return
 			}
 
-			if !assert.Equal(t, v.Loader, modInfo[0].Dependencies[0]) {
+			if !assert.Len(t, modInfo, 1) {
+				return
+			}
+
+			if !assert.Equal(t, v.ModId, modInfo[0].Id) {
+				return
+			}
+
+			if !assert.Equal(t, v.Loader, modInfo[0].Dependencies) {
 				return
 			}
 		})

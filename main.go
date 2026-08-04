@@ -252,23 +252,23 @@ func getUpdateJson(projectId uint, modId string, loader string, ctx context.Cont
 		}
 	} else if err != nil {
 		return nil, err
-	}
-
-	var wg sync.WaitGroup
-	var writer sync.Mutex
-	for _, v := range curseforgeFiles {
-		wg.Add(1)
-		downloaderWorkerQueue <- &QueueItem{
-			File:       v,
-			Wg:         &wg,
-			Mutex:      &writer,
-			VersionMap: versionMap,
-			Ctx:        ctx,
-			Project:    project,
-			ModId:      modId,
+	} else {
+		var wg sync.WaitGroup
+		var writer sync.Mutex
+		for _, v := range curseforgeFiles {
+			wg.Add(1)
+			downloaderWorkerQueue <- &QueueItem{
+				File:       v,
+				Wg:         &wg,
+				Mutex:      &writer,
+				VersionMap: versionMap,
+				Ctx:        ctx,
+				Project:    project,
+				ModId:      modId,
+			}
 		}
+		wg.Wait()
 	}
-	wg.Wait()
 
 	results := make(map[string]*models.Version)
 
@@ -287,7 +287,7 @@ func getUpdateJson(projectId uint, modId string, loader string, ctx context.Cont
 					results[key] = v
 				}
 
-				if v.Type == 1 {
+				if v.Type == curseforge.FileReleaseType_Release {
 					key = version + "-recommended"
 					existing, exists = results[key]
 					if !exists {
@@ -382,30 +382,9 @@ func getModVersion(project curseforge.Project, curseFile curseforge.File, modId 
 		if len(modsInFile) > 0 {
 			var matchingVersion *models.Version
 
-			var replacement = &models.Version{
-				CurseId: version.CurseId,
-				FileId:  version.FileId,
-				ModId:   version.ModId,
-			}
-
 			for _, z := range modsInFile {
-				version.Id = 0 //resets the id so we can create a new row for this mod id
-				existingIdMap := &models.Id{}
-				replacement.ModId = z.Id
-				err = db.Model(&replacement).Where(replacement).First(existingIdMap).Error
-				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-					return version, err
-				}
-				version.Id = existingIdMap.Id
-				version.Version = z.Version
-				version.ModId = z.Id
-				version.Url = fmt.Sprintf("%s/files/%d", project.Links.WebsiteUrl, curseFile.Id)
-				version.GameVersions = strings.Join(curseFile.GameVersions, ",")
-				version.Loader = strings.Join(z.Dependencies, ",")
-				err = db.Save(&version).Error
-				if err != nil {
-					return version, err
-				}
+				saveData(db, version, z, project, curseFile)
+
 				if version.ModId == modId {
 					matchingVersion = version
 				}
@@ -629,7 +608,7 @@ func readZipEntry(file *zip.File) ([]byte, error) {
 
 func readManifest(data []byte) map[string]string {
 	parsed := make(map[string]string)
-	for _, v := range strings.Split(string(data), "\n") {
+	for v := range strings.SplitSeq(string(data), "\n") {
 		split := strings.SplitN(v, ":", 2)
 		if len(split) == 2 {
 			parsed[strings.TrimSpace(split[0])] = strings.TrimSpace(split[1])
@@ -653,8 +632,8 @@ func getLoader(c *gin.Context) string {
 	if rootHost != "" {
 		rootHost = "." + rootHost
 		host := c.Request.Host
-		if strings.HasSuffix(host, rootHost) {
-			return strings.ToLower(strings.TrimSuffix(host, rootHost))
+		if before, ok := strings.CutSuffix(host, rootHost); ok {
+			return strings.ToLower(before)
 		}
 	}
 
@@ -665,4 +644,44 @@ func GetFromContext(ctx context.Context, key string) bool {
 	val := ctx.Value(key)
 	t, ok := val.(bool)
 	return ok && t
+}
+
+var inProgressSaves = sync.Map{}
+
+// Saves data to the database, but since we have to a read/write, there is safety code to
+// ensure that when we check if we have this, we don't accidently dupe if 2 calls are made at the same time
+// and with the same file involved
+func saveData(db *gorm.DB, version *models.Version, z *models.Mod, project curseforge.Project, curseFile curseforge.File) error {
+	version.Id = 0 //resets the id so we can create a new row for this mod id
+	version.Version = z.Version
+	version.ModId = z.Id
+	version.Url = fmt.Sprintf("%s/files/%d", project.Links.WebsiteUrl, curseFile.Id)
+	version.GameVersions = strings.Join(curseFile.GameVersions, ",")
+	version.Loader = strings.Join(z.Dependencies, ",")
+
+	var replacement = &models.Version{
+		CurseId: version.CurseId,
+		FileId:  version.FileId,
+		ModId:   z.Id,
+	}
+
+	key := fmt.Sprintf("%d-%d-%s", replacement.CurseId, replacement.FileId, replacement.ModId)
+
+	//if we create the key into the map, then this is not a pending request
+	//otherwise, another job is handling it, so we will just continue on
+	_, loaded := inProgressSaves.LoadOrStore(key, true)
+	if loaded {
+		return nil
+	}
+	defer inProgressSaves.Delete(key)
+
+	existingIdMap := &models.Id{}
+	err := db.Model(&replacement).Where(replacement).First(existingIdMap).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	version.Id = existingIdMap.Id
+	err = db.Save(&version).Error
+
+	return err
 }

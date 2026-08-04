@@ -195,3 +195,9 @@ type Pagination struct {
 	ResultCount int
 	TotalCount  int
 }
+
+const (
+	FileReleaseType_Release int8 = 1
+	FileReleaseType_Beta    int8 = 2
+	FileReleaseType_Alpha   int8 = 3
+)
