@@ -34,7 +34,7 @@ func (w *Worker) Start() {
 	for !done {
 		select {
 		case i := <-downloaderWorkerQueue:
-			w.Logger.Printf("Downloading %s\n", i.File.DownloadUrl)
+			w.Logger.Printf("[%d] Downloading %s\n", i.Project.Id, i.File.DownloadUrl)
 			w.ProcessItem(i)
 		case <-w.Stop:
 			done = true
@@ -49,11 +49,18 @@ type Worker struct {
 }
 
 func (w *Worker) ProcessItem(item *QueueItem) {
-	defer item.Wg.Done()
+	defer func() {
+		item.Wg.Done()
+
+		err := recover()
+		if err != nil {
+			w.Logger.Printf("Error processing item %d: %s\n", item.Project.Id, err)
+		}
+	}()
 	ctx := context.WithValue(item.Ctx, logger.ContextKey, w.Logger)
 	versionInfo, err := getModVersion(item.Project, item.File, item.ModId, ctx)
 	if err != nil {
-		w.Logger.Printf("Error getting mod version from file: %s", err.Error())
+		w.Logger.Printf("Error getting mod version from file: %s\n", err.Error())
 		return
 	}
 	item.Mutex.Lock()

@@ -327,11 +327,15 @@ func getModVersion(project curseforge.Project, curseFile curseforge.File, modId 
 	}
 
 	if errors.Is(err, gorm.ErrRecordNotFound) || version.Id == 0 {
+		if curseFile.DownloadUrl == "" {
+			return version, nil
+		}
+
 		reader, size, err := downloadFile(curseFile.DownloadUrl, ctx)
-		defer util.Close(reader)
 		if err != nil {
 			return version, err
 		}
+		defer util.Close(reader)
 
 		r, err := zip.NewReader(reader, size)
 		if err != nil {
@@ -580,6 +584,9 @@ func downloadFile(url string, ctx context.Context) (*util.TempFile, int64, error
 	defer response.Body.Close()
 
 	f, err := util.NewTempFile()
+	if err != nil {
+		return nil, 0, err
+	}
 	size, err := io.Copy(f, response.Body)
 	if err != nil {
 		return nil, 0, err
